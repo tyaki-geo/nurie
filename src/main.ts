@@ -1,69 +1,90 @@
+import { capsulePixels } from "./lib/brush";
 import {
+  channelBalance,
   clampChannel,
   compose,
   computeDarkness,
+  fillColor,
   fitSize,
-  floodRegion,
   lineAlpha,
   parseHex,
+  toCss,
   toHex,
-  type Rgb,
+  toHex6,
+  type Rgba,
 } from "./lib/lineart";
+import {
+  formatRegionList,
+  labelRegions,
+  parseRegionList,
+  pixelsOf,
+  type Regions,
+} from "./lib/regions";
 
-/** 作業用の画像の長辺の上限（大きすぎるとメモリと塗りつぶしが重くなる） */
+/** 作業用の画像の長辺の上限（大きすぎるとメモリと処理が重くなる） */
 const MAX_SIDE = 2048;
 const MAX_HISTORY = 50;
 const MAX_RECENT = 12;
+const WHITE: Rgba = [255, 255, 255, 255];
+const BLACK: Rgba = [0, 0, 0, 255];
+
+type Tool = "fill" | "multi" | "brush";
+type Layer = "colors" | "lines";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 const canvas = $<HTMLCanvasElement>("canvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+const overlay = $<HTMLCanvasElement>("overlay");
+const octx = overlay.getContext("2d")!;
 const stage = $("stage");
 const empty = $("empty");
+const status = $("status");
 
 interface Doc {
   width: number;
   height: number;
   dark: Uint8Array; // 画素ごとの黒さ
   alpha: Uint8Array; // 現在のしきい値での線の濃さ
-  colors: Uint8ClampedArray; // 塗った色（RGBA、初期は白）
-  out: ImageData; // 画面に出す最終画像
+  regions: Regions; // 線で囲まれた領域の番号
+  colors: Uint8ClampedArray; // 領域の色（RGBA、初期は不透明な白）
+  lines: Uint8ClampedArray; // 線の色（RGBA、初期は不透明な黒）
+  out: ImageData; // 画面に出す最終画像（透明度つき）
   name: string;
 }
 
-/** 1回の塗りの記録。元に戻す・やり直しに使う */
+/** 1回の操作の記録。元に戻す・やり直しに使う */
 interface Edit {
+  layer: Layer;
   indices: Int32Array;
-  before: Uint8ClampedArray; // 塗る前の色（indices と同じ順で RGBA）
-  after: Rgb;
+  before: Uint8ClampedArray; // 操作前の色（indices と同じ順で RGBA）
+  after: Rgba;
 }
 
 let doc: Doc | null = null;
+let tool: Tool = "fill";
 let threshold = 128;
-let color: Rgb = [255, 0, 0];
+let color: Rgba = [255, 0, 0, 255];
+let brushSize = 8; // 直径（画像の画素）
+let selection = new Set<number>();
 let undoStack: Edit[] = [];
 let redoStack: Edit[] = [];
-let recent: Rgb[] = [];
+let recent: Rgba[] = [];
 
 // ---------- 画像の読み込み ----------
 
-async function loadFile(file: File): Promise<void> {
-  if (!file.type.startsWith("image/")) {
-    alert("画像ファイルを選んでください。");
-    return;
-  }
+async function loadBlob(blob: Blob, name: string): Promise<void> {
   let bitmap: ImageBitmap;
   try {
-    bitmap = await createImageBitmap(file);
+    bitmap = await createImageBitmap(blob);
   } catch {
     alert("画像を読み込めませんでした。");
     return;
   }
   const { width, height } = fitSize(bitmap.width, bitmap.height, MAX_SIDE);
-  canvas.width = width;
-  canvas.height = height;
-  // 透明な部分は白として扱うので、白地に描く
+  canvas.width = overlay.width = width;
+  canvas.height = overlay.height = height;
+  // 透明な部分は白として扱うので、白地に描いて黒さを測る
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(bitmap, 0, 0, width, height);
@@ -71,43 +92,138 @@ async function loadFile(file: File): Promise<void> {
 
   const source = ctx.getImageData(0, 0, width, height);
   const dark = computeDarkness(source.data);
-  const colors = new Uint8ClampedArray(width * height * 4).fill(255);
+  const colors = new Uint8ClampedArray(width * height * 4);
+  const lines = new Uint8ClampedArray(width * height * 4);
+  fillColor(colors, WHITE);
+  fillColor(lines, BLACK);
   doc = {
     width,
     height,
     dark,
     alpha: lineAlpha(dark, threshold),
+    regions: labelRegions(dark, width, height, threshold),
     colors,
+    lines,
     out: ctx.createImageData(width, height),
-    name: file.name.replace(/\.[^.]+$/, "") || "nurie",
+    name: name.replace(/\.[^.]+$/, "") || "nurie",
   };
   undoStack = [];
   redoStack = [];
-  compose(doc.colors, doc.alpha, doc.out.data);
-  ctx.putImageData(doc.out, 0, 0);
+  selection = new Set();
+  render();
+  refreshSelectionUi();
   empty.hidden = true;
   stage.hidden = false;
+  status.textContent = `${doc.regions.count} 個の領域に番号をつけました。`;
   updateButtons();
 }
 
-// ---------- 描画・塗り ----------
-
-function render(from?: number, to?: number): void {
-  if (!doc) return;
-  compose(doc.colors, doc.alpha, doc.out.data, from, to);
-  ctx.putImageData(doc.out, 0, 0);
+async function loadFile(file: File): Promise<void> {
+  if (!file.type.startsWith("image/")) {
+    alert("画像ファイルを選んでください。");
+    return;
+  }
+  await loadBlob(file, file.name);
 }
 
-function paint(x: number, y: number): void {
+async function loadSample(name: string): Promise<void> {
+  const res = await fetch(`${import.meta.env.BASE_URL}samples/${name}.png`);
+  if (!res.ok) {
+    alert("サンプルを読み込めませんでした。");
+    return;
+  }
+  await loadBlob(await res.blob(), name);
+}
+
+// ---------- 描画 ----------
+
+/** 全画素を合成して描く */
+function render(): void {
   if (!doc) return;
-  const indices = floodRegion(doc.dark, doc.width, doc.height, threshold, x, y);
-  if (indices.length === 0) return; // 線の上
-  const before = new Uint8ClampedArray(indices.length * 4);
-  indices.forEach((px, k) => {
-    before.set(doc!.colors.subarray(px * 4, px * 4 + 4), k * 4);
+  compose(doc.colors, doc.lines, doc.alpha, doc.out.data);
+  ctx.putImageData(doc.out, 0, 0);
+  drawOverlay();
+}
+
+/** 指定した画素だけ合成し直して、その外接矩形だけ描く */
+function refresh(indices: Int32Array): void {
+  if (!doc || indices.length === 0) return;
+  const { width } = doc;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -1;
+  let maxY = -1;
+  for (const i of indices) {
+    compose(doc.colors, doc.lines, doc.alpha, doc.out.data, i, i + 1);
+    const x = i % width;
+    const y = (i - x) / width;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  ctx.putImageData(doc.out, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+}
+
+/** 選択中の領域の色づけと、領域の番号を重ねて描く */
+function drawOverlay(): void {
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!doc) return;
+  const { labels, count, sizes, anchors } = doc.regions;
+
+  if (selection.size > 0) {
+    const flags = new Uint8Array(count + 1);
+    for (const id of selection) flags[id] = 1;
+    const img = octx.createImageData(doc.width, doc.height);
+    for (let i = 0; i < labels.length; i++) {
+      if (flags[labels[i]!]) img.data.set([37, 99, 235, 110], i * 4);
+    }
+    octx.putImageData(img, 0, 0);
+  }
+
+  if ($<HTMLInputElement>("show-numbers").checked) {
+    const fs = Math.min(28, Math.max(10, Math.round(Math.min(doc.width, doc.height) / 40)));
+    octx.font = `bold ${fs}px system-ui, sans-serif`;
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    octx.lineJoin = "round";
+    octx.lineWidth = fs / 3;
+    for (let id = 1; id <= count; id++) {
+      if (sizes[id]! < fs * fs * 2) continue; // 小さすぎる領域には文字が入らない
+      const a = anchors[id]!;
+      const x = (a % doc.width) + 0.5;
+      const y = Math.floor(a / doc.width) + 0.5;
+      octx.strokeStyle = "#fff";
+      octx.strokeText(String(id), x, y);
+      octx.fillStyle = "#111";
+      octx.fillText(String(id), x, y);
+    }
+  }
+}
+
+// ---------- 操作の記録・適用 ----------
+
+function target(layer: Layer): Uint8ClampedArray {
+  return layer === "colors" ? doc!.colors : doc!.lines;
+}
+
+function apply(edit: Edit): void {
+  if (!doc) return;
+  const buf = target(edit.layer);
+  for (const px of edit.indices) buf.set(edit.after, px * 4);
+  refresh(edit.indices);
+}
+
+function revert(edit: Edit): void {
+  if (!doc) return;
+  const buf = target(edit.layer);
+  edit.indices.forEach((px, k) => {
+    buf.set(edit.before.subarray(k * 4, k * 4 + 4), px * 4);
   });
-  const edit: Edit = { indices, before, after: color };
-  apply(edit);
+  refresh(edit.indices);
+}
+
+function record(edit: Edit): void {
   undoStack.push(edit);
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   redoStack = [];
@@ -115,28 +231,194 @@ function paint(x: number, y: number): void {
   updateButtons();
 }
 
-function apply(edit: Edit): void {
-  if (!doc) return;
-  const [r, g, b] = edit.after;
-  for (const px of edit.indices) doc.colors.set([r, g, b, 255], px * 4);
-  render();
+function snapshot(layer: Layer, indices: Int32Array): Uint8ClampedArray {
+  const buf = target(layer);
+  const before = new Uint8ClampedArray(indices.length * 4);
+  indices.forEach((px, k) => before.set(buf.subarray(px * 4, px * 4 + 4), k * 4));
+  return before;
 }
 
-function revert(edit: Edit): void {
+/** 領域（番号の集合）を、いまの色で塗る。1回の操作として記録する */
+function paintRegions(ids: ReadonlySet<number>): void {
+  if (!doc || ids.size === 0) return;
+  const indices = pixelsOf(doc.regions.labels, ids);
+  if (indices.length === 0) return;
+  const edit: Edit = { layer: "colors", indices, before: snapshot("colors", indices), after: color };
+  apply(edit);
+  record(edit);
+}
+
+// ---------- ブラシ（線に沿って塗る） ----------
+
+interface Stroke {
+  touched: Uint8Array;
+  indices: number[];
+  before: number[];
+  lastX: number;
+  lastY: number;
+}
+let stroke: Stroke | null = null;
+
+function startStroke(x: number, y: number): void {
   if (!doc) return;
-  edit.indices.forEach((px, k) => {
-    doc!.colors.set(edit.before.subarray(k * 4, k * 4 + 4), px * 4);
+  stroke = {
+    touched: new Uint8Array(doc.width * doc.height),
+    indices: [],
+    before: [],
+    lastX: x,
+    lastY: y,
+  };
+  extendStroke(x, y);
+}
+
+/** 前の点から (x, y) までなぞった範囲のうち、黒い線の上の画素だけを線の色として塗る */
+function extendStroke(x: number, y: number): void {
+  if (!doc || !stroke) return;
+  const covered = capsulePixels(stroke.lastX, stroke.lastY, x, y, brushSize / 2, doc.width, doc.height);
+  stroke.lastX = x;
+  stroke.lastY = y;
+  const fresh: number[] = [];
+  for (const i of covered) {
+    if (stroke.touched[i] || doc.alpha[i] === 0) continue; // 線でない画素は塗らない
+    stroke.touched[i] = 1;
+    stroke.indices.push(i);
+    stroke.before.push(...doc.lines.subarray(i * 4, i * 4 + 4));
+    doc.lines.set(color, i * 4);
+    fresh.push(i);
+  }
+  refresh(Int32Array.from(fresh));
+}
+
+function endStroke(): void {
+  if (!stroke) return;
+  const s = stroke;
+  stroke = null;
+  if (s.indices.length === 0) return;
+  record({
+    layer: "lines",
+    indices: Int32Array.from(s.indices),
+    before: Uint8ClampedArray.from(s.before),
+    after: color,
   });
-  render();
 }
 
-canvas.addEventListener("click", (ev) => {
-  if (!doc) return;
+// ---------- キャンバスの操作 ----------
+
+function pixelAt(ev: PointerEvent): { x: number; y: number } | null {
+  if (!doc) return null;
   const rect = canvas.getBoundingClientRect();
-  const x = Math.floor(((ev.clientX - rect.left) / rect.width) * doc.width);
-  const y = Math.floor(((ev.clientY - rect.top) / rect.height) * doc.height);
-  paint(x, y);
+  const fx = ((ev.clientX - rect.left) / rect.width) * doc.width;
+  const fy = ((ev.clientY - rect.top) / rect.height) * doc.height;
+  return { x: fx, y: fy };
+}
+
+canvas.addEventListener("pointerdown", (ev) => {
+  const p = pixelAt(ev);
+  if (!doc || !p) return;
+  const x = Math.floor(p.x);
+  const y = Math.floor(p.y);
+  if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return;
+  if (tool === "brush") {
+    canvas.setPointerCapture(ev.pointerId);
+    startStroke(p.x, p.y);
+    return;
+  }
+  const id = doc.regions.labels[y * doc.width + x]!;
+  if (id === 0) return; // 線の上
+  if (tool === "fill") {
+    paintRegions(new Set([id]));
+  } else {
+    if (selection.has(id)) selection.delete(id);
+    else selection.add(id);
+    refreshSelectionUi();
+    drawOverlay();
+  }
 });
+
+canvas.addEventListener("pointermove", (ev) => {
+  const p = pixelAt(ev);
+  if (!doc || !p) return;
+  if (stroke) extendStroke(p.x, p.y);
+  const x = Math.floor(p.x);
+  const y = Math.floor(p.y);
+  if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return;
+  const i = y * doc.width + x;
+  const id = doc.regions.labels[i]!;
+  if (id === 0) {
+    status.textContent = `線の上  線の色 ${toHex(doc.lines.subarray(i * 4, i * 4 + 4))}`;
+  } else {
+    const a = doc.regions.anchors[id]!;
+    const c = doc.colors.subarray(a * 4, a * 4 + 4);
+    status.textContent =
+      `領域 #${id}（${doc.regions.sizes[id]} px）  現在の色 ${toHex(c)}` +
+      `${selection.has(id) ? "  ［選択中］" : ""}`;
+  }
+});
+canvas.addEventListener("pointerup", endStroke);
+canvas.addEventListener("pointercancel", endStroke);
+
+// ---------- 選択（複数領域） ----------
+
+function refreshSelectionUi(): void {
+  const text = formatRegionList(selection);
+  $<HTMLInputElement>("region-text").value = text;
+  const total = doc?.regions.count ?? 0;
+  $("selection-text").innerHTML = "";
+  const small = document.createElement("small");
+  small.textContent = doc
+    ? `選択中 ${selection.size} / ${total} 領域`
+    : "画像を読み込むと領域に番号がつきます";
+  $("selection-text").append(small);
+  updateButtons();
+}
+
+function selectByText(): void {
+  if (!doc) return;
+  const { ids, ignored } = parseRegionList($<HTMLInputElement>("region-text").value, doc.regions.count);
+  selection = new Set(ids);
+  refreshSelectionUi();
+  drawOverlay();
+  if (ignored.length > 0) {
+    status.textContent = `無視した指定: ${ignored.join(", ")}（番号は 1〜${doc.regions.count}）`;
+  }
+}
+
+$("region-select").addEventListener("click", selectByText);
+$("region-text").addEventListener("keydown", (ev) => {
+  if ((ev as KeyboardEvent).key === "Enter") selectByText();
+});
+$("select-all").addEventListener("click", () => {
+  if (!doc) return;
+  selection = new Set(Array.from({ length: doc.regions.count }, (_, k) => k + 1));
+  refreshSelectionUi();
+  drawOverlay();
+});
+$("select-none").addEventListener("click", () => {
+  selection = new Set();
+  refreshSelectionUi();
+  drawOverlay();
+});
+$("paint-selected").addEventListener("click", () => paintRegions(selection));
+$("show-numbers").addEventListener("change", drawOverlay);
+
+// ---------- ツール ----------
+
+for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="tool"]')) {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    tool = radio.value as Tool;
+    stage.dataset.tool = tool;
+  });
+}
+const brushRange = $<HTMLInputElement>("brush");
+const brushNumber = $<HTMLInputElement>("brush-n");
+function setBrush(v: number, source: HTMLInputElement): void {
+  brushSize = Math.min(60, Math.max(1, Math.round(Number.isFinite(v) ? v : 1)));
+  if (source !== brushRange) brushRange.value = String(brushSize);
+  if (source !== brushNumber) brushNumber.value = String(brushSize);
+}
+brushRange.addEventListener("input", () => setBrush(Number(brushRange.value), brushRange));
+brushNumber.addEventListener("input", () => setBrush(Number(brushNumber.value), brushNumber));
 
 // ---------- 操作ボタン ----------
 
@@ -158,7 +440,16 @@ function redo(): void {
 
 function clearColors(): void {
   if (!doc) return;
-  doc.colors.fill(255);
+  fillColor(doc.colors, WHITE);
+  undoStack = [];
+  redoStack = [];
+  render();
+  updateButtons();
+}
+
+function resetLines(): void {
+  if (!doc) return;
+  fillColor(doc.lines, BLACK);
   undoStack = [];
   redoStack = [];
   render();
@@ -178,18 +469,26 @@ function save(): void {
 }
 
 function updateButtons(): void {
+  const has = doc !== null;
   $<HTMLButtonElement>("undo").disabled = undoStack.length === 0;
   $<HTMLButtonElement>("redo").disabled = redoStack.length === 0;
-  $<HTMLButtonElement>("clear").disabled = !doc;
-  $<HTMLButtonElement>("save").disabled = !doc;
+  $<HTMLButtonElement>("clear").disabled = !has;
+  $<HTMLButtonElement>("reset-lines").disabled = !has;
+  $<HTMLButtonElement>("save").disabled = !has;
+  $<HTMLButtonElement>("select-all").disabled = !has;
+  $<HTMLButtonElement>("select-none").disabled = selection.size === 0;
+  $<HTMLButtonElement>("paint-selected").disabled = selection.size === 0;
 }
 
 $("undo").addEventListener("click", undo);
 $("redo").addEventListener("click", redo);
 $("clear").addEventListener("click", clearColors);
+$("reset-lines").addEventListener("click", resetLines);
 $("save").addEventListener("click", save);
 window.addEventListener("keydown", (ev) => {
-  if (!(ev.ctrlKey || ev.metaKey) || ev.target instanceof HTMLInputElement) return;
+  if (!(ev.ctrlKey || ev.metaKey)) return;
+  const t = ev.target;
+  if (t instanceof HTMLInputElement && (t.type === "text" || t.type === "number")) return;
   if (ev.key === "z") {
     ev.preventDefault();
     if (ev.shiftKey) redo();
@@ -208,32 +507,50 @@ thresholdInput.addEventListener("input", () => {
   $("threshold-value").textContent = String(threshold);
   if (!doc) return;
   doc.alpha = lineAlpha(doc.dark, threshold);
+  // 領域の切れ目が変わるので、番号と選択は作り直す（塗った色は画素ごとに残る）
+  doc.regions = labelRegions(doc.dark, doc.width, doc.height, threshold);
+  selection = new Set();
+  refreshSelectionUi();
   render();
+  status.textContent = `${doc.regions.count} 個の領域に番号をつけました。`;
 });
 
-// ---------- 色の選択 ----------
+// ---------- 色の選択（RGB + 透明度） ----------
 
 const picker = $<HTMLInputElement>("picker");
 const hexInput = $<HTMLInputElement>("hex");
-const channels = (["r", "g", "b"] as const).map((id) => ({
+const channels = (["r", "g", "b", "a"] as const).map((id) => ({
   number: $<HTMLInputElement>(id),
   range: $<HTMLInputElement>(`${id}-range`),
 }));
 
-function setColor(next: Rgb, source?: HTMLElement): void {
-  color = [clampChannel(next[0]), clampChannel(next[1]), clampChannel(next[2])];
-  $("swatch").style.background = toHex(color);
-  if (source !== picker) picker.value = toHex(color);
+function setColor(next: Rgba, source?: HTMLElement): void {
+  color = [clampChannel(next[0]), clampChannel(next[1]), clampChannel(next[2]), clampChannel(next[3])];
+  $("swatch").style.background = toCss(color);
+  if (source !== picker) picker.value = toHex6(color);
   if (source !== hexInput) hexInput.value = toHex(color);
   channels.forEach((c, i) => {
     if (source !== c.number) c.number.value = String(color[i]);
     if (source !== c.range) c.range.value = String(color[i]);
   });
+  showBalance();
+}
+
+function showBalance(): void {
+  const b = channelBalance(color);
+  const sum = color[0] + color[1] + color[2];
+  const bar = $("balance-bar").children;
+  [color[0], color[1], color[2]].forEach((v, i) => {
+    (bar[i] as HTMLElement).style.width = sum === 0 ? "0%" : `${(v / sum) * 100}%`;
+  });
+  $("balance-text").innerHTML =
+    `R ${color[0]}（${b.r.toFixed(1)}%）　G ${color[1]}（${b.g.toFixed(1)}%）　B ${color[2]}（${b.b.toFixed(1)}%）<br />` +
+    `A ${color[3]}（${b.a.toFixed(1)}%）　${toHex(color)}`;
 }
 
 channels.forEach((c, i) => {
   const onInput = (el: HTMLInputElement) => () => {
-    const next: [number, number, number] = [...color];
+    const next: [number, number, number, number] = [...color];
     next[i] = Number(el.value);
     setColor(next, el);
   };
@@ -242,21 +559,23 @@ channels.forEach((c, i) => {
 });
 picker.addEventListener("input", () => {
   const rgb = parseHex(picker.value);
-  if (rgb) setColor(rgb, picker);
+  if (rgb) setColor([rgb[0], rgb[1], rgb[2], color[3]], picker); // 透明度は変えない
 });
 hexInput.addEventListener("input", () => {
-  const rgb = parseHex(hexInput.value);
-  if (rgb) setColor(rgb, hexInput); // 入力の途中（不正な間）は何もしない
+  const rgba = parseHex(hexInput.value);
+  if (rgba) setColor(rgba, hexInput); // 入力の途中（不正な間）は何もしない
 });
 
-function rememberColor(c: Rgb): void {
+function rememberColor(c: Rgba): void {
   const hex = toHex(c);
   recent = [c, ...recent.filter((r) => toHex(r) !== hex)].slice(0, MAX_RECENT);
-  const box = $("recent");
-  box.replaceChildren(
+  $("recent").replaceChildren(
     ...recent.map((r) => {
       const b = document.createElement("button");
-      b.style.background = toHex(r);
+      b.className = "swatch";
+      const fill = document.createElement("i");
+      fill.style.background = toCss(r);
+      b.append(fill);
       b.title = toHex(r);
       b.setAttribute("aria-label", toHex(r));
       b.addEventListener("click", () => setColor(r));
@@ -265,12 +584,14 @@ function rememberColor(c: Rgb): void {
   );
 }
 
-// ---------- 画像の入力（選択・ドラッグ＆ドロップ・貼り付け） ----------
+// ---------- 画像の入力（選択・サンプル・ドラッグ＆ドロップ・貼り付け） ----------
 
 $<HTMLInputElement>("file").addEventListener("change", (ev) => {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (file) void loadFile(file);
 });
+$("sample-house").addEventListener("click", () => void loadSample("house"));
+$("sample-rings").addEventListener("click", () => void loadSample("rings"));
 
 for (const el of [empty, stage]) {
   el.addEventListener("dragover", (ev) => {
@@ -281,7 +602,7 @@ for (const el of [empty, stage]) {
   el.addEventListener("drop", (ev) => {
     ev.preventDefault();
     el.classList.remove("dragging");
-    const file = ev.dataTransfer?.files[0];
+    const file = (ev as DragEvent).dataTransfer?.files[0];
     if (file) void loadFile(file);
   });
 }
@@ -291,4 +612,5 @@ window.addEventListener("paste", (ev) => {
 });
 
 setColor(color);
+refreshSelectionUi();
 updateButtons();
