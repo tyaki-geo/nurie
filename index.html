@@ -96,7 +96,7 @@
         border: 1px solid var(--border);
         line-height: 0;
       }
-      #canvas { display: block; max-width: 100%; height: auto; touch-action: none; }
+      #canvas { display: block; max-width: 100%; max-height: calc(100vh - 72px); width: auto; height: auto; touch-action: none; }
       #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
       #stage[data-tool="brush"] #canvas { cursor: cell; }
       #stage[data-tool="fill"] #canvas, #stage[data-tool="multi"] #canvas { cursor: crosshair; }
@@ -137,7 +137,17 @@
         </section>
 
         <section>
-          <h2>線の抽出（黒い部分だけ拾う）</h2>
+          <h2>線の抽出（黒い線だけ拾う）</h2>
+          <label class="row"><input type="radio" name="extract" value="auto" checked />自動（写真向け）</label>
+          <small>影・机・他の物が映っていても、細い黒い線だけを取り出します。</small>
+          <label class="row"><input type="radio" name="extract" value="simple" />単純（スキャン・デジタルの線画向け）</label>
+          <small>画素の黒さをそのまま使います。太い黒ベタも黒として扱います。</small>
+          <label class="row"><input id="crop-paper" type="checkbox" checked />紙の部分だけを切り出す</label>
+          <div class="channel" style="grid-template-columns: auto 1fr 56px">
+            <span>線の太さ</span><input id="line-width" type="range" min="3" max="60" value="12" /><input id="line-width-n" type="number" min="3" max="60" value="12" />
+          </div>
+          <small>線の太さ（px）の上限の目安。これより広い暗い部分（影・机）は線にしません。線が欠けるときは大きく、影が線になるときは小さくします。</small>
+          <h2>線の濃さのしきい値</h2>
           <div class="row">
             <input id="threshold" type="range" min="10" max="255" value="128" class="grow" />
             <span id="threshold-value">128</span>
