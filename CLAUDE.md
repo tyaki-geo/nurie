@@ -16,6 +16,7 @@ npm run typecheck && npm test && npm run build
 
 - main はルールセット（`.github/protect-main.json`）で保護されている。直接 push せず、ブランチを切って PR を出す。レビューは CODEOWNERS。PR 本文は `.github/pull_request_template.md` に沿って書く
 - 自分の PR はレビューのしようがないので、ルールセットの例外（リポジトリ管理者、`bypass_mode: pull_request`）で通す。マージ画面で「Merge without waiting for requirements to be met (bypass rules)」にチェックを入れてマージする。例外は PR のマージ時だけで、main への直接 push はできない
+- 作業の進め方（Claude Code 向け）: 作業は main から新しいブランチを切ってから始める（既存のブランチや main の上で直接作業しない）。ユーザーへの逆質問がなく、要求された仕様の実装と動作確認が終わったら、確認を待たずに PR を作成する（本文は `.github/pull_request_template.md` に沿って書く）。PR に含めるコミットの末尾には `Co-authored-by: tyaki-geo <334568264+tyaki-geo@users.noreply.github.com>` を付ける
 - CI（`.github/workflows/ci.yml`）のジョブ名 `check` はルールセットの必須チェック名。変えるときは両方直す。実行環境は `ubuntu-24.04` に固定している
 - 依存パッケージは公開から2週間以上経った版を完全一致で固定する（`npm install --save-exact`）。`package-lock.json` もコミットする
 
