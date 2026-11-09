@@ -4,9 +4,148 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>nurie</title>
+    <style>
+      :root {
+        --bg: #f4f4f2;
+        --panel: #ffffff;
+        --border: #d8d8d4;
+        --text: #222;
+        --muted: #666;
+        --accent: #2563eb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      #app { display: flex; min-height: 100vh; }
+      aside {
+        width: 300px;
+        flex: none;
+        padding: 16px;
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      h1 { font-size: 20px; margin: 0; }
+      section { display: flex; flex-direction: column; gap: 8px; }
+      h2 { font-size: 13px; margin: 0; color: var(--muted); font-weight: 600; }
+      button, input[type="file"]::file-selector-button {
+        font: inherit;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #fafafa;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) { background: #eee; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .row > * { min-width: 0; }
+      .channel { display: grid; grid-template-columns: 16px 1fr 72px; gap: 8px; align-items: center; }
+      .channel input[type="number"], #hex {
+        font: inherit;
+        padding: 4px 6px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        width: 100%;
+      }
+      #swatch { width: 40px; height: 40px; border: 1px solid var(--border); border-radius: 6px; flex: none; }
+      #picker { width: 40px; height: 40px; padding: 0; border: none; background: none; flex: none; }
+      #recent { display: flex; flex-wrap: wrap; gap: 6px; }
+      #recent button { width: 26px; height: 26px; padding: 0; border-radius: 4px; }
+      main {
+        flex: 1;
+        min-width: 0;
+        padding: 16px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+      }
+      #stage {
+        position: relative;
+        max-width: 100%;
+        background: repeating-conic-gradient(#e8e8e8 0% 25%, #fff 0% 50%) 0 0 / 20px 20px;
+        border: 1px solid var(--border);
+      }
+      #canvas { display: block; max-width: 100%; height: auto; cursor: crosshair; }
+      #empty {
+        padding: 80px 40px;
+        text-align: center;
+        color: var(--muted);
+        border: 2px dashed var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+      }
+      #stage.dragging, #empty.dragging { outline: 3px solid var(--accent); }
+      small { color: var(--muted); }
+      @media (max-width: 720px) {
+        #app { flex-direction: column; }
+        aside { width: auto; border-right: none; border-bottom: 1px solid var(--border); }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <aside>
+        <h1>nurie</h1>
+
+        <section>
+          <h2>画像</h2>
+          <input id="file" type="file" accept="image/*" />
+          <small>ここに画像をドラッグ＆ドロップするか、貼り付け（Ctrl+V）でも読み込めます。</small>
+        </section>
+
+        <section>
+          <h2>線の抽出（黒い部分だけ拾う）</h2>
+          <div class="row">
+            <input id="threshold" type="range" min="10" max="255" value="128" style="flex: 1" />
+            <span id="threshold-value">128</span>
+          </div>
+          <small>小さいほど薄い線まで拾います。塗りがはみ出す（線が途切れている）ときは小さくしてみてください。</small>
+        </section>
+
+        <section>
+          <h2>塗る色（RGB）</h2>
+          <div class="row">
+            <input id="picker" type="color" value="#ff0000" aria-label="色を選ぶ" />
+            <div id="swatch"></div>
+            <input id="hex" type="text" value="#ff0000" spellcheck="false" aria-label="16進数の色" />
+          </div>
+          <div class="channel">
+            <span>R</span><input id="r-range" type="range" min="0" max="255" value="255" /><input id="r" type="number" min="0" max="255" value="255" />
+          </div>
+          <div class="channel">
+            <span>G</span><input id="g-range" type="range" min="0" max="255" value="0" /><input id="g" type="number" min="0" max="255" value="0" />
+          </div>
+          <div class="channel">
+            <span>B</span><input id="b-range" type="range" min="0" max="255" value="0" /><input id="b" type="number" min="0" max="255" value="0" />
+          </div>
+          <h2>最近使った色</h2>
+          <div id="recent"></div>
+          <small>線で囲まれた場所をクリックすると、その色で塗ります。</small>
+        </section>
+
+        <section>
+          <h2>操作</h2>
+          <div class="row">
+            <button id="undo" disabled>元に戻す</button>
+            <button id="redo" disabled>やり直し</button>
+          </div>
+          <button id="clear" disabled>色をすべて消す</button>
+          <button id="save" disabled>PNG で保存</button>
+        </section>
+      </aside>
+
+      <main>
+        <div id="empty">画像を選ぶか、ここにドラッグ＆ドロップしてください</div>
+        <div id="stage" hidden><canvas id="canvas"></canvas></div>
+      </main>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -4,6 +4,14 @@
 > このテンプレートから作ったリポジトリでは、下の手順を終えたら**このファイルを削除するか、実際の状態に合わせて書き直す**こと。
 > 手順どおりに設定済みかどうかは、このファイルからは分からない。設定の実態は GitHub 上（Settings → Rules / Pages）と `.github/` を見て判断する。
 
+## このリポジトリ（nurie）での状態
+
+- 適用日: 2026-11-10
+- 非公開リポジトリ（無料プラン）のため、**ルールセットと GitHub Pages は使えない**（API は「Upgrade to GitHub Pro or make this repository public」を返した）。手順 1・2 は、公開にするか有料プランにしてから行う
+- そのため `deploy.yml` は `workflow_dispatch`（手動）のみにしてある。Pages が使えるようになったら、ファイル内のコメントにしたがって `push` のトリガを戻す
+- 直す箇所のうち、`package.json` の name、`index.html` の title、`CLAUDE.md` の概要、サンプルコードの削除は済み。`CODEOWNERS` は tyaki-geo のまま
+- `dependabot.yml` は持ち込んでいない
+
 ## テンプレート由来の項目（使うときに直すもの）
 
 | 項目 | 場所 | 直すこと |
