@@ -102,6 +102,20 @@ describe("extractFromPhoto", () => {
   });
 });
 
+describe("紙の検出（線で分断されない）", () => {
+  it("画像を横切る線があっても、線の両側を1つの紙として、画像全体を切り出す", () => {
+    const w = 120;
+    const h = 90;
+    const px = new Uint8ClampedArray(w * h * 4).fill(255);
+    for (let x = 0; x < w; x++) for (let y = 60; y < 64; y++) px.set([0, 0, 0, 255], (y * w + x) * 4); // 横断する線
+    const e = extractFromPhoto(px, w, h, { maxLineWidth: 6, cropPaper: true });
+    expect(e.paperFound).toBe(true);
+    expect(e.width).toBe(w);
+    expect(e.height).toBe(h);
+    expect(at(e.dark, e.width, 60, 61)).toBeGreaterThan(240); // 線は線として残る
+  });
+});
+
 describe("extractSimple / defaultMaxLineWidth", () => {
   it("単純な抽出は画素の黒さそのまま（広い黒も黒）", () => {
     const px = new Uint8ClampedArray(8).fill(0);

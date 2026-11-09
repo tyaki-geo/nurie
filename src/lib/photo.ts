@@ -115,11 +115,16 @@ export function lineStrength(bright: Uint8Array, bg: Uint8Array): Uint8Array {
 
 // ---------- 紙の検出 ----------
 
-/** 紙を探す。見つからなければ null。mask は画素ごと（1 = 紙） */
+/**
+ * 紙を探す。見つからなければ null。mask は画素ごと（1 = 紙）。
+ * bg は線を除いた明るさ（closing の結果）。渡すと、紙の候補の「暗すぎる」判定に使う。
+ * 線の黒さで候補から外れず、絵の線（特に画像を横切る線）で紙が分断されない。
+ */
 export function findPaper(
   rgba: Uint8ClampedArray | Uint8Array,
   width: number,
   height: number,
+  bg?: Uint8Array,
 ): { mask: Uint8Array; box: Box } | null {
   const b = Math.max(2, Math.round(Math.max(width, height) / 256)); // ブロックの一辺
   const bw = Math.ceil(width / b);
@@ -133,6 +138,7 @@ export function findPaper(
       let r = 0;
       let g = 0;
       let bl = 0;
+      let bgSum = 0;
       let n = 0;
       for (let y = by * b; y < Math.min(height, (by + 1) * b); y++) {
         for (let x = bx * b; x < Math.min(width, (bx + 1) * b); x++) {
@@ -141,6 +147,7 @@ export function findPaper(
           r += rgba[o]! * a + 255 * (1 - a);
           g += rgba[o + 1]! * a + 255 * (1 - a);
           bl += rgba[o + 2]! * a + 255 * (1 - a);
+          if (bg) bgSum += bg[y * width + x]!;
           n++;
         }
       }
@@ -150,7 +157,7 @@ export function findPaper(
       const mx = Math.max(r, g, bl);
       const mn = Math.min(r, g, bl);
       const k = by * bw + bx;
-      val[k] = mx;
+      val[k] = bg ? bgSum / n : mx;
       sat[k] = mx === 0 ? 0 : (mx - mn) / mx;
     }
   }
@@ -298,7 +305,7 @@ export function extractFromPhoto(
   const bg = closing(bright, width, height, options.maxLineWidth / 2 + 1);
   const strength = lineStrength(bright, bg);
 
-  const paper = options.cropPaper ? findPaper(rgba, width, height) : null;
+  const paper = options.cropPaper ? findPaper(rgba, width, height, bg) : null;
   if (!paper) {
     return {
       width,
