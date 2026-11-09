@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  channelBalance,
   clampChannel,
   compose,
   computeDarkness,
   darkness,
+  fillColor,
   fitSize,
   floodRegion,
   lineAlpha,
   parseHex,
+  toCss,
   toHex,
+  toHex6,
 } from "../src/lib/lineart";
 
 /** 文字の絵から RGBA を作る。# = 黒、. = 白、r = 赤 */
@@ -80,28 +84,90 @@ describe("floodRegion", () => {
 });
 
 describe("compose", () => {
-  it("線のない画素は塗った色、完全な線は黒", () => {
+  const black = Uint8ClampedArray.from([0, 0, 0, 255, 0, 0, 0, 255]);
+
+  it("線のない画素は塗った色、完全な線は線の色（黒）", () => {
     const colors = Uint8ClampedArray.from([10, 20, 30, 255, 10, 20, 30, 255]);
     const out = new Uint8ClampedArray(8);
-    compose(colors, Uint8Array.from([0, 255]), out);
+    compose(colors, black, Uint8Array.from([0, 255]), out);
     expect([...out]).toEqual([10, 20, 30, 255, 0, 0, 0, 255]);
+  });
+  it("線の色を変えると、その色で線が出る", () => {
+    const colors = new Uint8ClampedArray(8).fill(255);
+    const red = Uint8ClampedArray.from([255, 0, 0, 255, 255, 0, 0, 255]);
+    const out = new Uint8ClampedArray(8);
+    compose(colors, red, Uint8Array.from([0, 255]), out);
+    expect([...out]).toEqual([255, 255, 255, 255, 255, 0, 0, 255]);
+  });
+  it("塗った色が半透明なら出力も半透明（色はそのまま）", () => {
+    const colors = Uint8ClampedArray.from([10, 20, 30, 128, 10, 20, 30, 0]);
+    const out = new Uint8ClampedArray(8);
+    compose(colors, black, Uint8Array.from([0, 0]), out);
+    expect([...out]).toEqual([10, 20, 30, 128, 0, 0, 0, 0]);
+  });
+  it("半透明の線は塗った色と混ざる", () => {
+    const colors = Uint8ClampedArray.from([200, 200, 200, 255]);
+    const out = new Uint8ClampedArray(4);
+    compose(colors, Uint8ClampedArray.from([0, 0, 0, 255]), Uint8Array.from([128]), out);
+    expect(out[0]).toBeGreaterThan(90);
+    expect(out[0]).toBeLessThan(110);
+    expect(out[3]).toBe(255);
+  });
+  it("線の色が半透明なら線の濃さに掛かる", () => {
+    const colors = Uint8ClampedArray.from([200, 200, 200, 255]);
+    const out = new Uint8ClampedArray(4);
+    compose(colors, Uint8ClampedArray.from([0, 0, 0, 0]), Uint8Array.from([255]), out);
+    expect([...out]).toEqual([200, 200, 200, 255]);
+  });
+  it("範囲を指定すると、その画素だけ更新する", () => {
+    const colors = new Uint8ClampedArray(8).fill(255);
+    const out = new Uint8ClampedArray(8);
+    compose(colors, black, Uint8Array.from([0, 0]), out, 1, 2);
+    expect([...out]).toEqual([0, 0, 0, 0, 255, 255, 255, 255]);
+  });
+});
+
+describe("fillColor", () => {
+  it("配列を指定の色で埋める", () => {
+    const buf = new Uint8ClampedArray(8);
+    fillColor(buf, [1, 2, 3, 4]);
+    expect([...buf]).toEqual([1, 2, 3, 4, 1, 2, 3, 4]);
   });
 });
 
 describe("色の変換", () => {
-  it("16進数", () => {
-    expect(parseHex("#ff8000")).toEqual([255, 128, 0]);
-    expect(parseHex("f80")).toEqual([255, 136, 0]);
+  it("16進数（不透明度つき）", () => {
+    expect(parseHex("#ff8000")).toEqual([255, 128, 0, 255]);
+    expect(parseHex("#ff800080")).toEqual([255, 128, 0, 128]);
+    expect(parseHex("f80")).toEqual([255, 136, 0, 255]);
+    expect(parseHex("f808")).toEqual([255, 136, 0, 136]);
     expect(parseHex("#12345")).toBeNull();
     expect(parseHex("xyz")).toBeNull();
-    expect(toHex([255, 128, 0])).toBe("#ff8000");
+    expect(toHex([255, 128, 0, 255])).toBe("#ff8000");
+    expect(toHex([255, 128, 0, 128])).toBe("#ff800080");
     expect(toHex([0, 0, 0])).toBe("#000000");
+    expect(toHex6([255, 128, 0, 10])).toBe("#ff8000");
+    expect(toHex(Uint8ClampedArray.from([1, 2, 3, 255]).subarray(0, 4))).toBe("#010203");
+  });
+  it("CSS の色", () => {
+    expect(toCss([255, 0, 0, 255])).toBe("rgba(255, 0, 0, 1.000)");
+    expect(toCss([0, 0, 0, 0])).toBe("rgba(0, 0, 0, 0.000)");
   });
   it("チャンネルは 0〜255 に丸める", () => {
     expect(clampChannel(300)).toBe(255);
     expect(clampChannel(-5)).toBe(0);
     expect(clampChannel(12.6)).toBe(13);
     expect(clampChannel(NaN)).toBe(0);
+  });
+});
+
+describe("channelBalance", () => {
+  it("R・G・B は合計に対する割合、A は不透明度の%", () => {
+    expect(channelBalance([200, 100, 100, 255])).toEqual({ r: 50, g: 25, b: 25, a: 100 });
+    expect(channelBalance([255, 0, 0, 128])).toEqual({ r: 100, g: 0, b: 0, a: 50.2 });
+  });
+  it("黒は割合を出せないので 0", () => {
+    expect(channelBalance([0, 0, 0, 255])).toEqual({ r: 0, g: 0, b: 0, a: 100 });
   });
 });
 

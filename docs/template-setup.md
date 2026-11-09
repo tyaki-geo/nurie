@@ -7,8 +7,7 @@
 ## このリポジトリ（nurie）での状態
 
 - 適用日: 2026-11-10
-- 非公開リポジトリ（無料プラン）のため、**ルールセットと GitHub Pages は使えない**（API は「Upgrade to GitHub Pro or make this repository public」を返した）。手順 1・2 は、公開にするか有料プランにしてから行う
-- そのため `deploy.yml` は `workflow_dispatch`（手動）のみにしてある。Pages が使えるようになったら、ファイル内のコメントにしたがって `push` のトリガを戻す
+- 当初は非公開（無料プラン）でルールセットと Pages が使えなかったが、公開リポジトリにしたあと、ルールセット `protect-main`（有効）と GitHub Pages（Source: GitHub Actions）を設定済み（2026-11-10 に API で確認）。`deploy.yml` は main への push で動く
 - 直す箇所のうち、`package.json` の name、`index.html` の title、`CLAUDE.md` の概要、サンプルコードの削除は済み。`CODEOWNERS` は tyaki-geo のまま
 - `dependabot.yml` は持ち込んでいない
 
