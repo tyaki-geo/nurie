@@ -25,17 +25,11 @@ export function labelRegions(
   const n = width * height;
   const labels = new Int32Array(n);
   const stack = new Int32Array(n);
-  const sizes: number[] = [0];
-  const sumX: number[] = [0];
-  const sumY: number[] = [0];
   let count = 0;
 
   for (let start = 0; start < n; start++) {
     if (labels[start] !== 0 || dark[start]! >= t) continue;
     count++;
-    let size = 0;
-    let sx = 0;
-    let sy = 0;
     let sp = 0;
     stack[sp++] = start;
     labels[start] = count;
@@ -43,9 +37,6 @@ export function labelRegions(
       const i = stack[--sp]!;
       const x = i % width;
       const y = (i - x) / width;
-      size++;
-      sx += x;
-      sy += y;
       if (x > 0 && labels[i - 1] === 0 && dark[i - 1]! < t) {
         labels[i - 1] = count;
         stack[sp++] = i - 1;
@@ -63,9 +54,26 @@ export function labelRegions(
         stack[sp++] = i + width;
       }
     }
-    sizes.push(size);
-    sumX.push(sx);
-    sumY.push(sy);
+  }
+  return buildRegions(labels, count, width, height);
+}
+
+/**
+ * 画素ごとの番号（線の上は 0、領域は 1〜count）から、大きさと番号の位置を求める。
+ * 番号は画面の左上から順（最初に現れる順）に振り直す必要があるなら、先に renumber を通す。
+ */
+export function buildRegions(labels: Int32Array, count: number, width: number, height: number): Regions {
+  const n = width * height;
+  const sizes = new Float64Array(count + 1);
+  const sumX = new Float64Array(count + 1);
+  const sumY = new Float64Array(count + 1);
+  for (let i = 0; i < n; i++) {
+    const id = labels[i]!;
+    if (id === 0) continue;
+    const x = i % width;
+    sizes[id]!++;
+    sumX[id]! += x;
+    sumY[id]! += (i - x) / width;
   }
 
   // 番号の位置は重心。重心が領域の外（輪の外側や C 字型など）なら、重心にいちばん近い領域内の画素にする
@@ -75,6 +83,7 @@ export function labelRegions(
   const bestDist = new Float64Array(count + 1).fill(Infinity);
   let needSearch = false;
   for (let id = 1; id <= count; id++) {
+    if (sizes[id] === 0) continue;
     cxs[id] = sumX[id]! / sizes[id]!;
     cys[id] = sumY[id]! / sizes[id]!;
     const c = Math.round(cys[id]!) * width + Math.round(cxs[id]!);
@@ -99,6 +108,19 @@ export function labelRegions(
     }
   }
   return { labels, count, sizes: Int32Array.from(sizes), anchors };
+}
+
+/** 番号を、画面の左上から見て最初に現れる順の 1, 2, 3… に振り直す（元の番号は 0 = 線、1〜max）。新しい番号の数を返す */
+export function renumber(labels: Int32Array, max: number): number {
+  const map = new Int32Array(max + 1);
+  let count = 0;
+  for (let i = 0; i < labels.length; i++) {
+    const id = labels[i]!;
+    if (id === 0) continue;
+    if (map[id] === 0) map[id] = ++count;
+    labels[i] = map[id]!;
+  }
+  return count;
 }
 
 /** 領域 id に属する画素の番号を集める */
