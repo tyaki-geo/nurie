@@ -158,10 +158,19 @@
       .rgb-boxes input { width: 100%; text-align: center; padding: 6px 4px; }
       kbd { font: 12px ui-monospace, monospace; padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); }
       .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; align-items: center; }
-      .gap-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--line); font-size: 12px; }
-      .gap-row.hot { background: var(--accent-soft); }
-      .gap-row .grow { cursor: pointer; }
-      #gap-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; }
+      dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 20px; width: min(560px, 92vw); font: inherit; }
+      dialog::backdrop { background: #000a; }
+      dialog h2 { margin: 0 0 6px; font-size: 16px; }
+      dialog p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+      dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+      #gap-dialog-list { max-height: 50vh; overflow-y: auto; border-top: 1px solid var(--line); }
+      .gap-item { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .gap-item canvas { width: 96px; height: 96px; flex: none; border: 1px solid var(--line); border-radius: 6px; background: #fff; image-rendering: pixelated; }
+      .gap-item .info { flex: 1; min-width: 0; font-size: 13px; }
+      .gap-item .choices { display: flex; flex-direction: column; gap: 4px; }
+      .gap-item .choices label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+      .export-form { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; }
+      .export-form select { width: 100%; }
       #palette { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; }
       .sw {
         aspect-ratio: 1; min-width: 0; padding: 0; cursor: pointer;
@@ -209,22 +218,7 @@
       <span class="sep"></span>
       <button class="btn" id="undo" disabled title="元に戻す (Z / Ctrl+Z)">⟲ 元に戻す</button>
       <button class="btn" id="redo" disabled title="やり直し (Y / Ctrl+Y / Ctrl+Shift+Z)">⟳ やり直し</button>
-      <select class="btn" id="export-format" aria-label="保存形式" title="保存形式">
-        <option value="png">PNG（透明度つき）</option>
-        <option value="webp">WebP（透明度つき）</option>
-        <option value="jpeg">JPEG（白背景）</option>
-      </select>
-      <select class="btn" id="export-aspect" aria-label="保存時の縦横比" title="保存時の縦横比（余白は中央寄せ。PNG/WebP は透明、JPEG は白）">
-        <option value="original">縦横比: 元のまま</option>
-        <option value="1:1">1:1</option>
-        <option value="4:3">4:3</option>
-        <option value="3:4">3:4</option>
-        <option value="3:2">3:2</option>
-        <option value="2:3">2:3</option>
-        <option value="16:9">16:9</option>
-        <option value="9:16">9:16</option>
-      </select>
-      <button class="btn primary" id="save" disabled title="選んだ形式・縦横比で保存">⬇ 画像を保存</button>
+      <button class="btn primary" id="save" disabled title="保存の形式・縦横比を選んで保存 (Ctrl+S)">⬇ 画像を保存</button>
     </header>
 
     <div class="toolbar" id="toolbar">
@@ -338,29 +332,8 @@
         </section>
 
         <section class="card">
-          <h2>線の隙間（手描きで空いた切れ目）</h2>
-          <label class="row"><input id="gap-on" type="checkbox" checked />隙間を検出する</label>
-          <div class="row">
-            <span>最大の幅</span>
-            <input id="gap-width" class="grow" type="range" min="1" max="30" value="6" />
-            <span id="gap-width-value" style="width: 3.2em; text-align: right">6 px</span>
-          </div>
-          <div class="row">
-            <span>囲まれ具合</span>
-            <input id="gap-enc" class="grow" type="range" min="50" max="99" value="85" />
-            <span id="gap-enc-value" style="width: 3.2em; text-align: right">85%</span>
-          </div>
-          <small>線を太らせて切れ目をふさぎ、切れ目をはさむ2つの部屋を探します。囲まれ具合 = 切れ目を除いた周のうち、線で囲まれている割合。下限以上のものは、別々の領域にするか、同じ領域のままにするかを選べます（別々にするときの境界は、切れ目をまたぐ最短の切り口）。</small>
-          <div class="row">
-            <button class="btn grow" id="gap-all-split">すべて別々</button>
-            <button class="btn grow" id="gap-all-same">すべて同じ</button>
-          </div>
-          <div id="gap-list"></div>
-        </section>
-
-        <section class="card">
-          <h2>ショートカット</h2>
-          <div class="keys">
+          <button class="btn" id="keys-toggle" aria-expanded="false" aria-controls="keys">⌨ ショートカット一覧を表示</button>
+          <div class="keys" id="keys" hidden>
             <span><kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Z</kbd></span><span>元に戻す</span>
             <span><kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span><span>やり直し</span>
             <span><kbd>F</kbd> <kbd>V</kbd> <kbd>B</kbd></span><span>塗りつぶし / 複数選択 / 線に沿って塗る</span>
@@ -383,6 +356,45 @@
         </section>
       </aside>
     </div>
+    <dialog id="gap-dialog" aria-labelledby="gap-dialog-title">
+      <h2 id="gap-dialog-title">線の隙間の確認</h2>
+      <p>線にわずかな切れ目があり、つながって見える場所が見つかりました。それぞれ、別々の領域にするか、同じ領域のままにするかを選んでください（あとから変更はできません）。</p>
+      <div class="row" style="margin-bottom: 8px">
+        <button class="btn" id="gap-all-split" type="button">すべて別々</button>
+        <button class="btn" id="gap-all-same" type="button">すべて同じ</button>
+      </div>
+      <div id="gap-dialog-list"></div>
+      <div class="actions"><button class="btn primary" id="gap-ok" type="button">決定</button></div>
+    </dialog>
+
+    <dialog id="export-dialog" aria-labelledby="export-dialog-title">
+      <h2 id="export-dialog-title">画像を保存</h2>
+      <div class="export-form">
+        <label for="export-format">形式</label>
+        <select class="btn" id="export-format">
+          <option value="png">PNG（透明度つき）</option>
+          <option value="webp">WebP（透明度つき）</option>
+          <option value="jpeg">JPEG（白背景）</option>
+        </select>
+        <label for="export-aspect">縦横比</label>
+        <select class="btn" id="export-aspect" title="余白は中央寄せ。PNG/WebP は透明、JPEG は白">
+          <option value="original">元のまま</option>
+          <option value="1:1">1:1</option>
+          <option value="4:3">4:3</option>
+          <option value="3:4">3:4</option>
+          <option value="3:2">3:2</option>
+          <option value="2:3">2:3</option>
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+        </select>
+        <span>サイズ</span>
+        <span id="export-size" class="hint"></span>
+      </div>
+      <div class="actions">
+        <button class="btn" id="export-cancel" type="button">キャンセル</button>
+        <button class="btn primary" id="export-ok" type="button">保存</button>
+      </div>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

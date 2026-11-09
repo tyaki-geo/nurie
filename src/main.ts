@@ -97,11 +97,10 @@ let undoStack: Edit[] = [];
 let redoStack: Edit[] = [];
 let recent: Rgba[] = [];
 let snapOn = true; // ブラシを線の中心に吸着させる
-let gapOn = true;
-let gapWidth = 6; // ふさぐ隙間の最大幅（px）
-let gapEnclosure = 0.85; // 囲まれ具合の下限
+const gapOn = true;
+const gapWidth = 6; // ふさぐ隙間の最大幅（px）
+const gapEnclosure = 0.85; // 囲まれ具合の下限
 let gapMerged = new Set<number>(); // 「同じ領域」にした隙間の候補番号（それ以外は別々）
-let hotGap = 0; // 一覧でポイントしている候補
 
 /** 読み込んだ画像（作業用の大きさに縮小したもの）。抽出の設定を変えたときに作り直すために持っておく */
 let source: { data: Uint8ClampedArray; width: number; height: number; name: string } | null = null;
@@ -179,6 +178,7 @@ function processSource(): void {
         : "紙の範囲は見つからなかったので、全体から線を抽出しました。";
   setStatus(`${paper}${regionSummary()}`);
   updateButtons();
+  askGaps();
 }
 
 const EMPTY_REGIONS: Regions = {
@@ -211,7 +211,6 @@ function analyzeNow(): void {
     ? analyzeGaps(doc.base, doc.width, doc.height, { maxWidth: gapWidth, minEnclosure: gapEnclosure })
     : null;
   gapMerged = new Set();
-  hotGap = 0;
   resolveNow();
 }
 
@@ -221,7 +220,6 @@ function resolveNow(): void {
   doc.regions = doc.gaps ? resolveGaps(doc.gaps, gapMerged, doc.width, doc.height) : doc.base;
   selection = new Set();
   refreshSelectionUi();
-  renderGapList();
   render();
 }
 
@@ -320,26 +318,6 @@ function drawOverlay(): void {
       if ((x + y) % 9 < 3) img.data.set([37, 99, 235, 200], i * 4);
     }
     octx.putImageData(img, 0, 0);
-  }
-
-  if (doc.gaps && doc.gaps.candidates.length > 0) {
-    const rad = Math.max(5, Math.min(doc.width, doc.height) / 90);
-    octx.font = `bold ${Math.round(rad * 1.3)}px system-ui, sans-serif`;
-    octx.textAlign = "center";
-    octx.textBaseline = "middle";
-    for (const c of doc.gaps.candidates) {
-      const same = gapMerged.has(c.id);
-      const hot = c.id === hotGap;
-      octx.beginPath();
-      octx.arc(c.x, c.y, hot ? rad * 1.5 : rad, 0, Math.PI * 2);
-      octx.fillStyle = same ? "rgba(107,114,128,0.85)" : "rgba(249,115,22,0.9)";
-      octx.fill();
-      octx.lineWidth = hot ? 3 : 1.5;
-      octx.strokeStyle = "#fff";
-      octx.stroke();
-      octx.fillStyle = "#fff";
-      octx.fillText(String(c.id), c.x, c.y + 0.5);
-    }
   }
 
   if (showNumbers) {
@@ -911,7 +889,35 @@ $("undo").addEventListener("click", undo);
 $("redo").addEventListener("click", redo);
 $("clear").addEventListener("click", clearColors);
 $("reset-lines").addEventListener("click", resetLines);
-$("save").addEventListener("click", save);
+
+// 保存: ボタンを押すと、ポップアップで形式・縦横比を選ぶ
+const exportDialog = $<HTMLDialogElement>("export-dialog");
+function updateExportSize(): void {
+  if (!doc) return;
+  const aspectValue = $<HTMLSelectElement>("export-aspect").value;
+  const size = exportSize(doc.width, doc.height, isAspect(aspectValue) ? aspectValue : "original");
+  $("export-size").textContent = `${size.width} × ${size.height} px`;
+}
+function openExport(): void {
+  if (!doc || exportDialog.open) return;
+  updateExportSize();
+  exportDialog.showModal();
+}
+$("export-aspect").addEventListener("change", updateExportSize);
+$("export-cancel").addEventListener("click", () => exportDialog.close());
+$("export-ok").addEventListener("click", () => {
+  exportDialog.close();
+  save();
+});
+$("save").addEventListener("click", openExport);
+
+// ショートカット一覧は、ボタンで開閉する
+$("keys-toggle").addEventListener("click", () => {
+  const keys = $("keys");
+  keys.hidden = !keys.hidden;
+  $("keys-toggle").setAttribute("aria-expanded", String(!keys.hidden));
+  $("keys-toggle").textContent = keys.hidden ? "⌨ ショートカット一覧を表示" : "⌨ ショートカット一覧を隠す";
+});
 
 // ---------- キーボードショートカット（CAD や画像編集ソフトで一般的なもの） ----------
 // Z 元に戻す / Y やり直し（Ctrl 付きも可）、F 塗りつぶし / V 複数選択 / B ブラシ、[ ] ブラシの太さ、
@@ -945,7 +951,7 @@ function nudgeBrush(delta: number): void {
 }
 
 window.addEventListener("keydown", (ev) => {
-  if (isTyping(ev.target) || ev.altKey || ev.isComposing) return;
+  if (isTyping(ev.target) || ev.altKey || ev.isComposing || document.querySelector("dialog[open]")) return;
   const mod = ev.ctrlKey || ev.metaKey;
   const control = ev.target instanceof HTMLButtonElement || ev.target instanceof HTMLInputElement;
 
@@ -962,7 +968,7 @@ window.addEventListener("keydown", (ev) => {
         selectAll();
         break;
       case "KeyS":
-        save();
+        openExport();
         break;
       default:
         return; // コピー・貼り付けなどはブラウザに任せる
@@ -1104,92 +1110,80 @@ thresholdInput.addEventListener("input", () => {
   }, 120);
 });
 
-// ---------- 線の隙間 ----------
+// ---------- 線の隙間の確認（画像を読み込んだ直後に、ポップアップで必ず選ばせる） ----------
 
-const gapList = $("gap-list");
+const gapDialog = $<HTMLDialogElement>("gap-dialog");
+let gapPending = false; // 選び終えるまで閉じさせない
+gapDialog.addEventListener("cancel", (ev) => ev.preventDefault()); // Esc で閉じさせない
+gapDialog.addEventListener("close", () => {
+  if (gapPending) gapDialog.showModal(); // ブラウザが Esc で閉じてしまったときは開き直す
+});
 
-/** 隙間の候補の一覧。候補ごとに「別々 / 同じ」を選べる */
-function renderGapList(): void {
-  gapList.replaceChildren();
+/** 隙間の位置の周りを切り出した小さな絵（中心に印） */
+function gapPreview(x: number, y: number): HTMLCanvasElement {
+  const size = 96;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d")!;
+  g.imageSmoothingEnabled = false;
+  const span = 64; // 画像の画素
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, size, size);
+  g.drawImage(canvas, x - span / 2, y - span / 2, span, span, 0, 0, size, size);
+  g.beginPath();
+  g.arc(size / 2, size / 2, 14, 0, Math.PI * 2);
+  g.lineWidth = 2;
+  g.strokeStyle = "#f97316";
+  g.stroke();
+  return c;
+}
+
+/** 隙間の候補があれば、別々 / 同じ を選ぶポップアップを出す。決定すると領域の番号を作り直す */
+function askGaps(): void {
   const cands = doc?.gaps?.candidates ?? [];
-  $<HTMLButtonElement>("gap-all-split").disabled = cands.length === 0;
-  $<HTMLButtonElement>("gap-all-same").disabled = cands.length === 0;
-  if (!doc || !gapOn) return;
-  if (cands.length === 0) {
-    const none = document.createElement("small");
-    none.textContent = "この設定では、隙間の候補はありません。";
-    gapList.append(none);
-    return;
-  }
+  if (!doc || cands.length === 0) return;
+  const list = $("gap-dialog-list");
+  list.replaceChildren();
   for (const c of cands) {
-    const row = document.createElement("div");
-    row.className = "gap-row";
-    row.classList.toggle("hot", c.id === hotGap);
-    const label = document.createElement("span");
-    label.className = "grow";
-    label.title = "クリックで、その位置を拡大して表示";
-    label.textContent = `#${c.id}　幅 ${c.width}px・囲まれ具合 ${Math.round(c.enclosure * 100)}%`;
-    label.addEventListener("click", () => focusOn(c.x, c.y, 6));
-    const seg = document.createElement("div");
-    seg.className = "seg";
+    const item = document.createElement("div");
+    item.className = "gap-item";
+    const info = document.createElement("div");
+    info.className = "info";
+    info.textContent = `#${c.id}　幅 ${c.width}px・囲まれ具合 ${Math.round(c.enclosure * 100)}%`;
+    const choices = document.createElement("div");
+    choices.className = "choices";
     for (const same of [false, true]) {
-      const b = document.createElement("button");
-      b.className = "btn";
-      b.classList.toggle("on", gapMerged.has(c.id) === same);
-      b.textContent = same ? "同じ" : "別々";
-      b.title = same ? "隙間をふさがず、ひとつながりの領域として扱う" : "隙間の両側を別々の領域にする";
-      b.addEventListener("click", () => setGap(c.id, same));
-      seg.append(b);
+      const label = document.createElement("label");
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `gap-${c.id}`;
+      radio.value = same ? "same" : "split";
+      radio.checked = !same; // 既定は別々
+      label.append(radio, same ? "同じ領域のまま" : "別々の領域にする");
+      choices.append(label);
     }
-    row.addEventListener("mouseenter", () => setHotGap(c.id));
-    row.addEventListener("mouseleave", () => setHotGap(0));
-    row.append(label, seg);
-    gapList.append(row);
+    item.append(gapPreview(c.x, c.y), info, choices);
+    list.append(item);
   }
+  gapPending = true;
+  gapDialog.showModal();
 }
 
-function setHotGap(id: number): void {
-  if (hotGap === id) return;
-  hotGap = id;
-  gapList.querySelectorAll(".gap-row").forEach((el, k) => {
-    el.classList.toggle("hot", doc?.gaps?.candidates[k]?.id === id);
-  });
-  drawOverlay();
+function setAllGaps(value: "split" | "same"): void {
+  gapDialog.querySelectorAll<HTMLInputElement>(`input[type="radio"][value="${value}"]`).forEach((r) => (r.checked = true));
 }
-
-function setGap(id: number, same: boolean): void {
-  if (same) gapMerged.add(id);
-  else gapMerged.delete(id);
+$("gap-all-split").addEventListener("click", () => setAllGaps("split"));
+$("gap-all-same").addEventListener("click", () => setAllGaps("same"));
+$("gap-ok").addEventListener("click", () => {
+  const cands = doc?.gaps?.candidates ?? [];
+  gapMerged = new Set(
+    cands.filter((c) => gapDialog.querySelector<HTMLInputElement>(`input[name="gap-${c.id}"]:checked`)?.value === "same").map((c) => c.id),
+  );
+  gapPending = false;
+  gapDialog.close();
   resolveNow();
   setStatus(regionSummary());
-}
-
-function setAllGaps(same: boolean): void {
-  gapMerged = same ? new Set((doc?.gaps?.candidates ?? []).map((c) => c.id)) : new Set();
-  resolveNow();
-  setStatus(regionSummary());
-}
-$("gap-all-split").addEventListener("click", () => setAllGaps(false));
-$("gap-all-same").addEventListener("click", () => setAllGaps(true));
-
-const gapOnInput = $<HTMLInputElement>("gap-on");
-const gapWidthInput = $<HTMLInputElement>("gap-width");
-const gapEncInput = $<HTMLInputElement>("gap-enc");
-let gapTimer = 0;
-function onGapSettings(): void {
-  gapOn = gapOnInput.checked;
-  gapWidth = Number(gapWidthInput.value);
-  gapEnclosure = Number(gapEncInput.value) / 100;
-  $("gap-width-value").textContent = `${gapWidth} px`;
-  $("gap-enc-value").textContent = `${gapEncInput.value}%`;
-  gapWidthInput.disabled = gapEncInput.disabled = !gapOn;
-  window.clearTimeout(gapTimer);
-  gapTimer = window.setTimeout(() => {
-    analyzeNow();
-    setStatus(regionSummary());
-  }, 120);
-}
-for (const el of [gapOnInput, gapWidthInput, gapEncInput]) el.addEventListener("input", onGapSettings);
+});
 
 // ---------- 色（パレット・スペクトル・RGB + 透明度）。RGB の値を出すのはここだけ ----------
 
