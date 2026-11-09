@@ -1,4 +1,6 @@
+import { IDENTITY, panBy, zoomAt, type View } from "./lib/view";
 import { capsulePixels } from "./lib/brush";
+import { FORMATS, exportSize, isAspect, isFormat } from "./lib/export";
 import {
   channelBalance,
   clampChannel,
@@ -139,6 +141,7 @@ function processSource(): void {
   refreshSelectionUi();
   empty.hidden = true;
   stage.hidden = false;
+  setView(IDENTITY);
   const paper =
     mode !== "auto" || !$<HTMLInputElement>("crop-paper").checked
       ? ""
@@ -348,17 +351,12 @@ function pixelAt(ev: PointerEvent): { x: number; y: number } | null {
   return { x: fx, y: fy };
 }
 
-canvas.addEventListener("pointerdown", (ev) => {
-  const p = pixelAt(ev);
-  if (!doc || !p) return;
+/** 塗る・選ぶ操作（フィル・複数選択ツールのクリック） */
+function clickAt(p: { x: number; y: number }): void {
+  if (!doc) return;
   const x = Math.floor(p.x);
   const y = Math.floor(p.y);
   if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return;
-  if (tool === "brush") {
-    canvas.setPointerCapture(ev.pointerId);
-    startStroke(p.x, p.y);
-    return;
-  }
   const id = doc.regions.labels[y * doc.width + x]!;
   if (id === 0) return; // 線の上
   if (tool === "fill") {
@@ -369,9 +367,119 @@ canvas.addEventListener("pointerdown", (ev) => {
     refreshSelectionUi();
     drawOverlay();
   }
+}
+
+// ---------- 拡大・縮小と平行移動 ----------
+
+const viewport = $("viewport");
+let view: View = IDENTITY;
+
+function setView(next: View): void {
+  view = next;
+  stage.style.transform = `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`;
+}
+const viewSize = (): [number, number] => [viewport.clientWidth, viewport.clientHeight];
+
+// ホイールの縦回転は拡大・縮小、横回転は横移動（ピンチ操作は ctrl 付きのホイールとして届き、拡大・縮小になる）
+viewport.addEventListener(
+  "wheel",
+  (ev) => {
+    if (!doc) return;
+    ev.preventDefault();
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? viewport.clientHeight : 1;
+    const [w, h] = viewSize();
+    if (!ev.ctrlKey && Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
+      setView(panBy(view, -ev.deltaX * unit, 0, w, h));
+    } else {
+      const rect = viewport.getBoundingClientRect();
+      const factor = Math.exp(-ev.deltaY * unit * (ev.ctrlKey ? 0.01 : 0.0015));
+      setView(zoomAt(view, factor, ev.clientX - rect.left, ev.clientY - rect.top, w, h));
+    }
+  },
+  { passive: false },
+);
+
+// 平行移動: フィル・複数選択ツールでは左ボタンのドラッグ（動かさずに離せばクリック）。
+// ブラシは左ドラッグが描画なので、スペースキーを押しながら、または中ボタンのドラッグで移動する
+const DRAG_THRESHOLD = 4;
+let spaceDown = false;
+let drag: {
+  id: number;
+  lastX: number;
+  lastY: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  click: { x: number; y: number } | null;
+} | null = null;
+
+window.addEventListener("keydown", (ev) => {
+  const t = ev.target;
+  const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
+  if (typing || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.code === "Space") {
+    spaceDown = true;
+    ev.preventDefault();
+  } else if (ev.key === "0") {
+    setView(IDENTITY);
+  }
+});
+window.addEventListener("keyup", (ev) => {
+  if (ev.code === "Space") spaceDown = false;
+});
+window.addEventListener("blur", () => {
+  spaceDown = false;
 });
 
+canvas.addEventListener("pointerdown", (ev) => {
+  const p = pixelAt(ev);
+  if (!doc || !p) return;
+  if (ev.button !== 0 && ev.button !== 1) return;
+  const panOnly = ev.button === 1 || spaceDown;
+  if (panOnly || tool !== "brush") {
+    ev.preventDefault();
+    canvas.setPointerCapture(ev.pointerId);
+    drag = {
+      id: ev.pointerId,
+      lastX: ev.clientX,
+      lastY: ev.clientY,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      moved: panOnly,
+      click: panOnly ? null : p,
+    };
+    if (panOnly) stage.classList.add("panning");
+    return;
+  }
+  const x = Math.floor(p.x);
+  const y = Math.floor(p.y);
+  if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return;
+  canvas.setPointerCapture(ev.pointerId);
+  startStroke(p.x, p.y);
+});
+
+function endDrag(ev: PointerEvent, cancelled: boolean): void {
+  if (!drag || drag.id !== ev.pointerId) return;
+  const d = drag;
+  drag = null;
+  stage.classList.remove("panning");
+  if (!d.moved && d.click && !cancelled) clickAt(d.click);
+}
+
 canvas.addEventListener("pointermove", (ev) => {
+  if (drag && drag.id === ev.pointerId) {
+    if (!drag.moved && Math.hypot(ev.clientX - drag.startX, ev.clientY - drag.startY) > DRAG_THRESHOLD) {
+      drag.moved = true;
+      stage.classList.add("panning");
+    }
+    if (drag.moved) {
+      const [w, h] = viewSize();
+      setView(panBy(view, ev.clientX - drag.lastX, ev.clientY - drag.lastY, w, h));
+    }
+    drag.lastX = ev.clientX;
+    drag.lastY = ev.clientY;
+    return;
+  }
   const p = pixelAt(ev);
   if (!doc || !p) return;
   if (stroke) extendStroke(p.x, p.y);
@@ -390,8 +498,26 @@ canvas.addEventListener("pointermove", (ev) => {
       `${selection.has(id) ? "  ［選択中］" : ""}`;
   }
 });
-canvas.addEventListener("pointerup", endStroke);
-canvas.addEventListener("pointercancel", endStroke);
+canvas.addEventListener("pointerup", (ev) => {
+  endDrag(ev, false);
+  endStroke();
+});
+canvas.addEventListener("pointercancel", (ev) => {
+  endDrag(ev, true);
+  endStroke();
+});
+
+// マウスの戻る（ボタン4）・進む（ボタン5）は、ブラウザの履歴ではなく元に戻す・やり直しにする。
+// キーボードや画面のボタンからの操作とはイベントの種類が違うので、混ざらない
+for (const type of ["mousedown", "mouseup", "auxclick"] as const) {
+  window.addEventListener(type, (ev) => {
+    if (ev.button !== 3 && ev.button !== 4) return;
+    ev.preventDefault();
+    if (type !== "mouseup") return;
+    if (ev.button === 3) undo();
+    else redo();
+  });
+}
 
 // ---------- 選択（複数領域） ----------
 
@@ -494,14 +620,34 @@ function resetLines(): void {
 
 function save(): void {
   if (!doc) return;
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${doc!.name}-colored.png`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }, "image/png");
+  const fmtValue = $<HTMLSelectElement>("export-format").value;
+  const aspectValue = $<HTMLSelectElement>("export-aspect").value;
+  const fmt = FORMATS[isFormat(fmtValue) ? fmtValue : "png"];
+  const aspect = isAspect(aspectValue) ? aspectValue : "original";
+  const size = exportSize(doc.width, doc.height, aspect);
+  const out = document.createElement("canvas");
+  out.width = size.width;
+  out.height = size.height;
+  const octx = out.getContext("2d")!;
+  // 透明度のない形式（JPEG）は、余白も透けている部分も白で埋める
+  if (!fmt.alpha) {
+    octx.fillStyle = "#fff";
+    octx.fillRect(0, 0, out.width, out.height);
+  }
+  octx.drawImage(canvas, Math.floor((size.width - doc.width) / 2), Math.floor((size.height - doc.height) / 2));
+  const name = doc.name;
+  out.toBlob(
+    (blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${name}-colored.${fmt.ext}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    fmt.mime,
+    0.95,
+  );
 }
 
 function updateButtons(): void {

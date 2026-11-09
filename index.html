@@ -55,7 +55,7 @@
       .row > * { min-width: 0; }
       .grow { flex: 1; }
       .channel { display: grid; grid-template-columns: 16px 1fr 72px; gap: 8px; align-items: center; }
-      input[type="number"], input[type="text"] {
+      input[type="number"], input[type="text"], select {
         font: inherit;
         padding: 4px 6px;
         border: 1px solid var(--border);
@@ -89,9 +89,11 @@
         gap: 8px;
         align-items: center;
       }
+      #viewport { max-width: 100%; overflow: hidden; }
       #stage {
         position: relative;
         max-width: 100%;
+        transform-origin: 0 0;
         background: var(--checker);
         border: 1px solid var(--border);
         line-height: 0;
@@ -100,6 +102,7 @@
       #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
       #stage[data-tool="brush"] #canvas { cursor: cell; }
       #stage[data-tool="fill"] #canvas, #stage[data-tool="multi"] #canvas { cursor: crosshair; }
+      #stage.panning #canvas { cursor: grabbing; }
       #status {
         min-height: 1.6em;
         font-size: 13px;
@@ -219,15 +222,38 @@
           </div>
           <button id="reset-lines" disabled>線の色を黒に戻す</button>
           <button id="clear" disabled>色をすべて消す</button>
-          <button id="save" disabled>PNG で保存（透明度つき）</button>
+          <div class="row">
+            <label class="grow"><small>形式</small>
+              <select id="export-format">
+                <option value="png">PNG（透明度つき）</option>
+                <option value="webp">WebP（透明度つき）</option>
+                <option value="jpeg">JPEG（白背景）</option>
+              </select>
+            </label>
+            <label class="grow"><small>縦横比</small>
+              <select id="export-aspect">
+                <option value="original">元のまま</option>
+                <option value="1:1">1:1</option>
+                <option value="4:3">4:3</option>
+                <option value="3:4">3:4</option>
+                <option value="3:2">3:2</option>
+                <option value="2:3">2:3</option>
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+              </select>
+            </label>
+          </div>
+          <button id="save" disabled>画像を保存</button>
         </section>
       </aside>
 
       <main>
         <div id="empty">画像を選ぶか、ここにドラッグ＆ドロップしてください。<br />左の「サンプル」からも試せます。</div>
-        <div id="stage" hidden data-tool="fill">
-          <canvas id="canvas"></canvas>
-          <canvas id="overlay"></canvas>
+        <div id="viewport">
+          <div id="stage" hidden data-tool="fill">
+            <canvas id="canvas"></canvas>
+            <canvas id="overlay"></canvas>
+          </div>
         </div>
         <div id="status"></div>
       </main>
