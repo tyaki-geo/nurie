@@ -91,11 +91,13 @@
         background: var(--stage);
         display: flex; align-items: flex-start; justify-content: center;
       }
-      #stage { position: relative; line-height: 0; background: var(--checker); box-shadow: 0 2px 12px #0006; }
+      #viewport { max-width: 100%; overflow: hidden; }
+      #stage { transform-origin: 0 0; position: relative; line-height: 0; background: var(--checker); box-shadow: 0 2px 12px #0006; }
       #canvas { display: block; max-width: 100%; max-height: calc(100vh - 190px); width: auto; height: auto; touch-action: none; }
       #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
       #stage[data-tool="brush"] #canvas { cursor: none; }
       #stage[data-tool="fill"] #canvas, #stage[data-tool="multi"] #canvas { cursor: crosshair; }
+      #stage.panning #canvas { cursor: grabbing !important; }
       #brush-cursor {
         position: absolute; pointer-events: none; border-radius: 50%;
         border: 1px solid #000; box-shadow: 0 0 0 1px #fff;
@@ -226,10 +228,12 @@
             画像を開くか、ここにドラッグ＆ドロップ（貼り付けも可）してください。<br />
             上の「サンプル」からも試せます。
           </div>
-          <div id="stage" hidden data-tool="fill">
-            <canvas id="canvas"></canvas>
-            <canvas id="overlay"></canvas>
-            <div id="brush-cursor" hidden></div>
+          <div id="viewport">
+            <div id="stage" hidden data-tool="fill">
+              <canvas id="canvas"></canvas>
+              <canvas id="overlay"></canvas>
+              <div id="brush-cursor" hidden></div>
+            </div>
           </div>
         </div>
         <div id="status"></div>
