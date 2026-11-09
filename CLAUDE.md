@@ -26,6 +26,7 @@ npm run typecheck && npm test && npm run build
 - `src/lib/lineart.ts` 黒さの計算、線の抽出、合成（領域の色 + 線の色 → 透明度つきの最終画像）、色の変換（`#rrggbbaa`）、RGB のバランス
 - `src/lib/regions.ts` 領域の番号づけ（連結成分のラベリング）、番号の位置、`1, 3, 5-8` の読み書き
 - `src/lib/palette.ts` 色パネルの見本の色（24色）
+- `src/lib/export.ts` 画像出力の形式（PNG/JPEG/WebP）と縦横比（元のまま・1:1・4:3 など）。画像は縮小せず中央に置き、余白は透明（JPEG は白）
 - `src/lib/brush.ts` 太さのあるブラシが覆う画素
 - `scripts/generate-samples.mjs` サンプル画像（`public/samples/`）を作る。依存なし
 - `tests/` Vitest。DOM に依存しないロジックはすべてここでテストする

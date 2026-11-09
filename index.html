@@ -174,7 +174,22 @@
       <span class="sep"></span>
       <button class="btn" id="undo" disabled title="元に戻す (Ctrl+Z)">⟲ 元に戻す</button>
       <button class="btn" id="redo" disabled title="やり直し (Ctrl+Shift+Z)">⟳ やり直し</button>
-      <button class="btn primary" id="save" disabled title="透明度つきの PNG で保存">⬇ PNG で保存</button>
+      <select class="btn" id="export-format" aria-label="保存形式" title="保存形式">
+        <option value="png">PNG（透明度つき）</option>
+        <option value="webp">WebP（透明度つき）</option>
+        <option value="jpeg">JPEG（白背景）</option>
+      </select>
+      <select class="btn" id="export-aspect" aria-label="保存時の縦横比" title="保存時の縦横比（余白は中央寄せ。PNG/WebP は透明、JPEG は白）">
+        <option value="original">縦横比: 元のまま</option>
+        <option value="1:1">1:1</option>
+        <option value="4:3">4:3</option>
+        <option value="3:4">3:4</option>
+        <option value="3:2">3:2</option>
+        <option value="2:3">2:3</option>
+        <option value="16:9">16:9</option>
+        <option value="9:16">9:16</option>
+      </select>
+      <button class="btn primary" id="save" disabled title="選んだ形式・縦横比で保存">⬇ 画像を保存</button>
     </header>
 
     <div class="toolbar" id="toolbar">

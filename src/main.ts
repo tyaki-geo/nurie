@@ -1,4 +1,5 @@
 import { capsulePixels } from "./lib/brush";
+import { FORMATS, exportSize, isAspect, isFormat } from "./lib/export";
 import {
   channelBalance,
   clampChannel,
@@ -577,14 +578,34 @@ function resetLines(): void {
 
 function save(): void {
   if (!doc) return;
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${doc!.name}-colored.png`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }, "image/png");
+  const fmtValue = $<HTMLSelectElement>("export-format").value;
+  const aspectValue = $<HTMLSelectElement>("export-aspect").value;
+  const fmt = FORMATS[isFormat(fmtValue) ? fmtValue : "png"];
+  const aspect = isAspect(aspectValue) ? aspectValue : "original";
+  const size = exportSize(doc.width, doc.height, aspect);
+  const out = document.createElement("canvas");
+  out.width = size.width;
+  out.height = size.height;
+  const octx = out.getContext("2d")!;
+  // 透明度のない形式（JPEG）は、余白も透けている部分も白で埋める
+  if (!fmt.alpha) {
+    octx.fillStyle = "#fff";
+    octx.fillRect(0, 0, out.width, out.height);
+  }
+  octx.drawImage(canvas, Math.floor((size.width - doc.width) / 2), Math.floor((size.height - doc.height) / 2));
+  const name = doc.name;
+  out.toBlob(
+    (blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${name}-colored.${fmt.ext}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    fmt.mime,
+    0.95,
+  );
 }
 
 function updateButtons(): void {
