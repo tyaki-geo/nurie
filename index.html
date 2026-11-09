@@ -87,13 +87,14 @@
       .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 0; }
       .canvas-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
       .stage-scroll {
-        flex: 1; overflow: auto; padding: 16px;
+        flex: 1; position: relative; overflow: hidden;
         background: var(--stage);
-        display: flex; align-items: flex-start; justify-content: center;
+        display: flex;
       }
-      #viewport { max-width: 100%; overflow: hidden; }
-      #stage { transform-origin: 0 0; position: relative; line-height: 0; background: var(--checker); box-shadow: 0 2px 12px #0006; }
-      #canvas { display: block; max-width: 100%; max-height: calc(100vh - 190px); width: auto; height: auto; touch-action: none; }
+      /* 表示枠は作業領域いっぱい。紙面（#stage）は拡大・移動で枠の中を動く */
+      #viewport { position: absolute; inset: 0; overflow: hidden; }
+      #stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; line-height: 0; background: var(--checker); box-shadow: 0 2px 12px #0006; }
+      #canvas { display: block; width: 100%; height: 100%; touch-action: none; }
       #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
       #stage[data-tool="brush"] #canvas { cursor: none; }
       #stage[data-tool="fill"] #canvas, #stage[data-tool="multi"] #canvas { cursor: crosshair; }
@@ -103,9 +104,10 @@
         border: 1px solid #000; box-shadow: 0 0 0 1px #fff;
         transform: translate(-50%, -50%);
       }
-      #stage.dragging, #empty.dragging { outline: 3px solid var(--accent); }
+      #brush-cursor.off { border-style: dashed; opacity: 0.6; }
+      #viewport.dragging, #empty.dragging { outline: 3px solid var(--accent); }
       #empty {
-        margin: auto; padding: 70px 40px; text-align: center; line-height: 1.8;
+        margin: auto; position: relative; padding: 70px 40px; text-align: center; line-height: 1.8;
         color: var(--muted);
         background: var(--panel);
         border: 2px dashed var(--line);
@@ -126,9 +128,40 @@
       .card h2 { margin: 0; font-size: 12px; color: var(--muted); font-weight: 600; }
 
       /* 色パネル */
-      .current { display: flex; align-items: center; gap: 10px; }
-      .current .chip { width: 44px; height: 44px; border-radius: 8px; }
-      #picker { width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; flex: none; }
+      .cp { display: flex; flex-direction: column; gap: 10px; }
+      #sv { position: relative; height: 150px; border-radius: 6px; border: 1px solid var(--line); cursor: crosshair; touch-action: none; user-select: none; }
+      #sv::before, #sv::after { content: ""; position: absolute; inset: 0; border-radius: 5px; }
+      #sv::before { background: linear-gradient(to right, #fff, rgba(255,255,255,0)); }
+      #sv::after { background: linear-gradient(to top, #000, rgba(0,0,0,0)); }
+      #sv-knob {
+        position: absolute; z-index: 1; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+        border: 2px solid #fff; box-shadow: 0 0 0 1px #0008, inset 0 0 0 1px #0008; pointer-events: none;
+      }
+      .cp-row { display: flex; align-items: center; gap: 10px; }
+      #eyedropper { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; flex: none; }
+      .current { width: 40px; height: 40px; border-radius: 50%; flex: none; background: var(--checker); position: relative; overflow: hidden; border: 1px solid var(--line); }
+      .current > i { position: absolute; inset: 0; }
+      #hue { flex: 1; min-width: 0; }
+      input[type="range"].hue {
+        -webkit-appearance: none; appearance: none; height: 12px; border-radius: 6px; outline: none; margin: 0;
+        background: linear-gradient(to right, #f00, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00);
+      }
+      input[type="range"].hue::-webkit-slider-thumb {
+        -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+        background: var(--hue-thumb, #f00); border: 3px solid #fff; box-shadow: 0 0 0 1px #0007; cursor: pointer;
+      }
+      input[type="range"].hue::-moz-range-thumb {
+        width: 12px; height: 12px; border-radius: 50%; background: var(--hue-thumb, #f00); border: 3px solid #fff; box-shadow: 0 0 0 1px #0007; cursor: pointer;
+      }
+      .rgb-boxes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .rgb-boxes label { display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 600; }
+      .rgb-boxes input { width: 100%; text-align: center; padding: 6px 4px; }
+      kbd { font: 12px ui-monospace, monospace; padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); }
+      .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; align-items: center; }
+      .gap-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--line); font-size: 12px; }
+      .gap-row.hot { background: var(--accent-soft); }
+      .gap-row .grow { cursor: pointer; }
+      #gap-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; }
       #palette { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; }
       .sw {
         aspect-ratio: 1; min-width: 0; padding: 0; cursor: pointer;
@@ -160,7 +193,7 @@
       @media (max-width: 900px) {
         .layout { grid-template-columns: 1fr; grid-auto-rows: auto; }
         .side { border-left: none; border-top: 1px solid var(--line); }
-        #canvas { max-height: 70vh; }
+        .stage-scroll { min-height: 70vh; }
       }
     </style>
   </head>
@@ -174,8 +207,8 @@
       <button class="btn" id="sample-house">サンプル: 家</button>
       <button class="btn" id="sample-rings">サンプル: 輪</button>
       <span class="sep"></span>
-      <button class="btn" id="undo" disabled title="元に戻す (Ctrl+Z)">⟲ 元に戻す</button>
-      <button class="btn" id="redo" disabled title="やり直し (Ctrl+Shift+Z)">⟳ やり直し</button>
+      <button class="btn" id="undo" disabled title="元に戻す (Z / Ctrl+Z)">⟲ 元に戻す</button>
+      <button class="btn" id="redo" disabled title="やり直し (Y / Ctrl+Y / Ctrl+Shift+Z)">⟳ やり直し</button>
       <select class="btn" id="export-format" aria-label="保存形式" title="保存形式">
         <option value="png">PNG（透明度つき）</option>
         <option value="webp">WebP（透明度つき）</option>
@@ -196,9 +229,9 @@
 
     <div class="toolbar" id="toolbar">
       <div class="group seg" role="group" aria-label="ツール">
-        <button class="btn on" data-tool="fill" title="クリックした領域をすぐ塗る">▣ 塗りつぶし</button>
-        <button class="btn" data-tool="multi" title="領域を選んで、まとめて同じ色で塗る">▦ 複数選択</button>
-        <button class="btn" data-tool="brush" title="ドラッグで線に沿って塗る（線からはみ出してもよい）">✎ 線に沿って塗る</button>
+        <button class="btn on" data-tool="fill" title="クリックした領域をすぐ塗る (F)">▣ 塗りつぶし</button>
+        <button class="btn" data-tool="multi" title="領域を選んで、まとめて同じ色で塗る (V)">▦ 複数選択</button>
+        <button class="btn" data-tool="brush" title="ドラッグで線に沿って塗る。線を中心に左右へはみ出して塗れる (B)">✎ 線に沿って塗る</button>
       </div>
       <span class="sep"></span>
 
@@ -223,6 +256,7 @@
           <input id="brush-n" type="number" min="1" max="60" value="12" style="width: 4.2em" />
           <span class="hint">px</span>
         </label>
+        <label title="オンのとき、ペンが線の中心に吸着して、線に沿ってその左右にはみ出して塗る。オフで自由に塗る"><input id="snap" type="checkbox" checked />線に吸着</label>
         <span class="sep"></span>
         <span class="hint">下の線を</span>
         <div class="seg" role="group" aria-label="線の扱い">
@@ -233,7 +267,7 @@
       </div>
 
       <div class="spacer"></div>
-      <button class="btn" id="show-numbers" aria-pressed="false" title="領域の番号を画像に重ねて表示">＃ 番号を表示</button>
+      <button class="btn" id="show-numbers" aria-pressed="false" title="領域の番号を画像に重ねて表示 (N)">＃ 番号を表示</button>
     </div>
 
     <div class="layout">
@@ -257,27 +291,29 @@
       <aside class="side">
         <section class="card">
           <h2>色</h2>
-          <div class="current">
-            <div class="chip"><i id="swatch"></i></div>
-            <input id="picker" type="color" value="#e53935" aria-label="色を選ぶ（スペクトル）" title="スペクトルから選ぶ" />
-            <small>パレットかスペクトルから選び、下の値で細かく調整できます。</small>
+          <div class="cp">
+            <div id="sv" aria-label="彩度と明度" title="ドラッグで色の位置を選ぶ（右ほど鮮やか、上ほど明るい）"><div id="sv-knob"></div></div>
+            <div class="cp-row">
+              <button class="btn" id="eyedropper" title="画面から色を拾う（ブラウザが対応している場合）" aria-label="スポイト">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>
+              </button>
+              <div class="current" title="いまの色"><i id="swatch"></i></div>
+              <input id="hue" class="hue" type="range" min="0" max="360" step="1" aria-label="色相" title="色相" />
+            </div>
+            <div class="rgb-boxes">
+              <label>R<input id="r" type="number" min="0" max="255" /></label>
+              <label>G<input id="g" type="number" min="0" max="255" /></label>
+              <label>B<input id="b" type="number" min="0" max="255" /></label>
+            </div>
           </div>
-          <div id="palette" role="group" aria-label="パレット"></div>
-          <h2>最近使った色</h2>
-          <div id="recent"></div>
-          <h2>RGB・透明度（0〜255。右は R+G+B に対する割合、A は不透明度）</h2>
-          <div class="ch">
-            <span>R</span><input id="r-range" class="grad" type="range" min="0" max="255" /><input id="r" type="number" min="0" max="255" /><span class="pct" id="r-pct"></span>
-          </div>
-          <div class="ch">
-            <span>G</span><input id="g-range" class="grad" type="range" min="0" max="255" /><input id="g" type="number" min="0" max="255" /><span class="pct" id="g-pct"></span>
-          </div>
-          <div class="ch">
-            <span>B</span><input id="b-range" class="grad" type="range" min="0" max="255" /><input id="b" type="number" min="0" max="255" /><span class="pct" id="b-pct"></span>
-          </div>
+          <h2>透明度（A: 0〜255。0 で透明、255 で不透明）</h2>
           <div class="ch">
             <span>A</span><input id="a-range" class="grad" type="range" min="0" max="255" /><input id="a" type="number" min="0" max="255" /><span class="pct" id="a-pct"></span>
           </div>
+          <h2>パレット</h2>
+          <div id="palette" role="group" aria-label="パレット"></div>
+          <h2>最近使った色</h2>
+          <div id="recent"></div>
         </section>
 
         <section class="card">
@@ -299,6 +335,45 @@
             <span id="threshold-value" style="width: 2.4em; text-align: right">128</span>
           </div>
           <small>小さいほど薄い線まで拾います。塗りがはみ出す（線が途切れている）ときは小さくします。変えると領域の番号と選択は作り直されます。</small>
+        </section>
+
+        <section class="card">
+          <h2>線の隙間（手描きで空いた切れ目）</h2>
+          <label class="row"><input id="gap-on" type="checkbox" checked />隙間を検出する</label>
+          <div class="row">
+            <span>最大の幅</span>
+            <input id="gap-width" class="grow" type="range" min="1" max="30" value="6" />
+            <span id="gap-width-value" style="width: 3.2em; text-align: right">6 px</span>
+          </div>
+          <div class="row">
+            <span>囲まれ具合</span>
+            <input id="gap-enc" class="grow" type="range" min="50" max="99" value="85" />
+            <span id="gap-enc-value" style="width: 3.2em; text-align: right">85%</span>
+          </div>
+          <small>線を太らせて切れ目をふさぎ、切れ目をはさむ2つの部屋を探します。囲まれ具合 = 切れ目を除いた周のうち、線で囲まれている割合。下限以上のものは、別々の領域にするか、同じ領域のままにするかを選べます（別々にするときの境界は、切れ目をまたぐ最短の切り口）。</small>
+          <div class="row">
+            <button class="btn grow" id="gap-all-split">すべて別々</button>
+            <button class="btn grow" id="gap-all-same">すべて同じ</button>
+          </div>
+          <div id="gap-list"></div>
+        </section>
+
+        <section class="card">
+          <h2>ショートカット</h2>
+          <div class="keys">
+            <span><kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Z</kbd></span><span>元に戻す</span>
+            <span><kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span><span>やり直し</span>
+            <span><kbd>F</kbd> <kbd>V</kbd> <kbd>B</kbd></span><span>塗りつぶし / 複数選択 / 線に沿って塗る</span>
+            <span><kbd>[</kbd> <kbd>]</kbd></span><span>ブラシを細く / 太く</span>
+            <span><kbd>Enter</kbd></span><span>選択を塗る</span>
+            <span><kbd>Esc</kbd></span><span>選択解除・ストローク中止</span>
+            <span><kbd>Ctrl</kbd>+<kbd>A</kbd></span><span>すべて選択</span>
+            <span><kbd>N</kbd></span><span>番号の表示</span>
+            <span><kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd></span><span>拡大 / 縮小 / 全体表示</span>
+            <span><kbd>Space</kbd>+ドラッグ</span><span>移動（中ボタンでも可）</span>
+            <span><kbd>Ctrl</kbd>+<kbd>S</kbd></span><span>画像を保存</span>
+            <span>ホイール</span><span>拡大・縮小</span>
+          </div>
         </section>
 
         <section class="card">

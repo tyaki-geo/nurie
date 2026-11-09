@@ -1,4 +1,15 @@
-import { IDENTITY, panBy, zoomAt, type View } from "./lib/view";
+import {
+  centerView,
+  clampView,
+  fitSize as fitToFrame,
+  panBy,
+  zoomAt,
+  type Frame,
+  type View,
+} from "./lib/view";
+import { analyzeGaps, resolveGaps, type GapAnalysis } from "./lib/gaps";
+import { hsvToRgb, rgbToHsv, type Hsv } from "./lib/hsv";
+import { ridgeOf, snapToRidge, type SnapPoint } from "./lib/skeleton";
 import { capsulePixels } from "./lib/brush";
 import { FORMATS, exportSize, isAspect, isFormat } from "./lib/export";
 import {
@@ -11,8 +22,7 @@ import {
   parseHex,
   toCss,
   toHex,
-  toHex6,
-  type Rgba,
+    type Rgba,
 } from "./lib/lineart";
 import { PALETTE } from "./lib/palette";
 import { defaultMaxLineWidth, extractFromPhoto, extractSimple } from "./lib/photo";
@@ -52,7 +62,10 @@ interface Doc {
   height: number;
   dark: Uint8Array; // 画素ごとの黒さ
   alpha: Uint8Array; // 現在のしきい値での線の濃さ
-  regions: Regions; // 線で囲まれた領域の番号
+  base: Regions; // 線だけで囲まれた領域（隙間は考えない）
+  regions: Regions; // 線で囲まれた領域の番号（隙間の扱いを反映したもの。塗る・選ぶ・番号の表示はこちら）
+  gaps: GapAnalysis | null; // 線の隙間の検出結果（検出しないときは null）
+  ridge: Uint8Array | null; // 線の中心（芯）。ブラシが吸着する先。最初に使うときに作る
   colors: Uint8ClampedArray; // 領域の色（RGBA、初期は不透明な白）
   lines: Uint8ClampedArray; // 線の色（RGBA、初期は不透明な黒。透明にすると線が消える）
   out: ImageData; // 画面に出す最終画像（透明度つき）
@@ -83,6 +96,12 @@ let selection = new Set<number>();
 let undoStack: Edit[] = [];
 let redoStack: Edit[] = [];
 let recent: Rgba[] = [];
+let snapOn = true; // ブラシを線の中心に吸着させる
+let gapOn = true;
+let gapWidth = 6; // ふさぐ隙間の最大幅（px）
+let gapEnclosure = 0.85; // 囲まれ具合の下限
+let gapMerged = new Set<number>(); // 「同じ領域」にした隙間の候補番号（それ以外は別々）
+let hotGap = 0; // 一覧でポイントしている候補
 
 /** 読み込んだ画像（作業用の大きさに縮小したもの）。抽出の設定を変えたときに作り直すために持っておく */
 let source: { data: Uint8ClampedArray; width: number; height: number; name: string } | null = null;
@@ -137,7 +156,10 @@ function processSource(): void {
     height,
     dark,
     alpha: lineAlpha(dark, threshold),
-    regions: labelRegions(dark, width, height, threshold),
+    base: EMPTY_REGIONS,
+    regions: EMPTY_REGIONS,
+    gaps: null,
+    ridge: null,
     colors,
     lines,
     out: ctx.createImageData(width, height),
@@ -145,20 +167,73 @@ function processSource(): void {
   };
   undoStack = [];
   redoStack = [];
-  selection = new Set();
-  render();
-  refreshSelectionUi();
   empty.hidden = true;
   stage.hidden = false;
-  setView(IDENTITY);
+  layout(true);
+  rebuildRegions();
   const paper =
     extractMode !== "auto" || !appliedCrop
       ? ""
       : extracted.paperFound
         ? "紙の部分を切り出しました。"
         : "紙の範囲は見つからなかったので、全体から線を抽出しました。";
-  setStatus(`${paper}${doc.regions.count} 個の領域に番号をつけました。`);
+  setStatus(`${paper}${regionSummary()}`);
   updateButtons();
+}
+
+const EMPTY_REGIONS: Regions = {
+  labels: new Int32Array(0),
+  count: 0,
+  sizes: new Int32Array(1),
+  anchors: new Int32Array(1),
+};
+
+// ---------- 領域の番号づけと線の隙間 ----------
+
+function regionSummary(): string {
+  if (!doc) return "";
+  const n = doc.gaps?.candidates.length ?? 0;
+  return `${doc.regions.count} 個の領域に番号をつけました。${n > 0 ? `線の隙間の候補が ${n} 件あります。` : ""}`;
+}
+
+/** しきい値が変わったとき・画像を作り直したとき: 領域を線から作り直し、隙間も探し直す（選択と隙間の選択は解除） */
+function rebuildRegions(): void {
+  if (!doc) return;
+  doc.base = labelRegions(doc.dark, doc.width, doc.height, threshold);
+  doc.ridge = null;
+  analyzeNow();
+}
+
+/** 隙間の設定が変わったとき: 隙間を探し直す。選びは既定（すべて別々）に戻る */
+function analyzeNow(): void {
+  if (!doc) return;
+  doc.gaps = gapOn
+    ? analyzeGaps(doc.base, doc.width, doc.height, { maxWidth: gapWidth, minEnclosure: gapEnclosure })
+    : null;
+  gapMerged = new Set();
+  hotGap = 0;
+  resolveNow();
+}
+
+/** 隙間ごとの「別々 / 同じ」の選びを反映して、領域の番号を作る。塗った色は画素ごとに残る */
+function resolveNow(): void {
+  if (!doc) return;
+  doc.regions = doc.gaps ? resolveGaps(doc.gaps, gapMerged, doc.width, doc.height) : doc.base;
+  selection = new Set();
+  refreshSelectionUi();
+  renderGapList();
+  render();
+}
+
+/** 線の中心。最初に使うときに作る */
+function getRidge(): Uint8Array {
+  const d = doc!;
+  if (!d.ridge) {
+    const line = new Uint8Array(d.width * d.height);
+    for (let i = 0; i < line.length; i++) line[i] = d.base.labels[i] === 0 ? 1 : 0;
+    d.ridge = ridgeOf(line, d.width, d.height);
+  }
+  return d.ridge;
 }
 
 /** 抽出の設定を変えると塗った色が消える。消えてよいか確認する（塗った内容がなければ確認しない） */
@@ -247,6 +322,26 @@ function drawOverlay(): void {
     octx.putImageData(img, 0, 0);
   }
 
+  if (doc.gaps && doc.gaps.candidates.length > 0) {
+    const rad = Math.max(5, Math.min(doc.width, doc.height) / 90);
+    octx.font = `bold ${Math.round(rad * 1.3)}px system-ui, sans-serif`;
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    for (const c of doc.gaps.candidates) {
+      const same = gapMerged.has(c.id);
+      const hot = c.id === hotGap;
+      octx.beginPath();
+      octx.arc(c.x, c.y, hot ? rad * 1.5 : rad, 0, Math.PI * 2);
+      octx.fillStyle = same ? "rgba(107,114,128,0.85)" : "rgba(249,115,22,0.9)";
+      octx.fill();
+      octx.lineWidth = hot ? 3 : 1.5;
+      octx.strokeStyle = "#fff";
+      octx.stroke();
+      octx.fillStyle = "#fff";
+      octx.fillText(String(c.id), c.x, c.y + 0.5);
+    }
+  }
+
   if (showNumbers) {
     const fs = Math.min(28, Math.max(10, Math.round(Math.min(doc.width, doc.height) / 40)));
     octx.font = `bold ${fs}px system-ui, sans-serif`;
@@ -323,10 +418,25 @@ interface Stroke {
   indices: number[];
   colorsBefore: number[];
   linesBefore: number[];
-  lastX: number;
+  lastX: number; // 直前に塗った位置（ここから次の位置までをなぞる）
   lastY: number;
+  snap: SnapPoint | null; // 直前の線の中心への吸着先。線から離れているときは null
+  px: number; // 直前のペンの位置
+  py: number;
 }
 let stroke: Stroke | null = null;
+
+/**
+ * ペンの位置に対する、塗る位置。吸着オンなら、近くの線の中心（芯）。線から遠ければ null（塗らない）。
+ * 吸着オフならペンの位置そのまま。
+ */
+function snapPoint(x: number, y: number): SnapPoint | null {
+  if (!doc) return null;
+  if (!snapOn) return { x, y };
+  // 吸着できる距離（画像の画素）。ブラシが太いほど遠くまで
+  const radius = Math.max(24, brushSize * 1.5);
+  return snapToRidge(getRidge(), doc.width, doc.height, x, y, radius, stroke?.snap ?? null);
+}
 
 function startStroke(x: number, y: number): void {
   if (!doc) return;
@@ -339,12 +449,37 @@ function startStroke(x: number, y: number): void {
     linesBefore: [],
     lastX: x,
     lastY: y,
+    snap: null,
+    px: x,
+    py: y,
   };
-  extendStroke(x, y);
+  advanceStroke(x, y, snapPoint(x, y));
 }
 
 /**
- * 前の点から (x, y) までなぞった範囲を塗る。線の外にもはみ出して塗れる。
+ * ペンが (x, y) に来たとき、塗る位置 sp まで塗り進める。
+ * ペンを線からはずすと、その間は塗らない。吸着先が別の線へ大きく飛んだときは、線でつながないで、その点だけ塗る。
+ */
+function advanceStroke(x: number, y: number, sp: SnapPoint | null): void {
+  const s = stroke;
+  if (!s) return;
+  const step = Math.hypot(x - s.px, y - s.py);
+  s.px = x;
+  s.py = y;
+  if (!sp) {
+    s.snap = null;
+    return;
+  }
+  if (!s.snap || Math.hypot(sp.x - s.snap.x, sp.y - s.snap.y) > 2 * step + 4) {
+    s.lastX = sp.x;
+    s.lastY = sp.y;
+  }
+  s.snap = sp;
+  extendStroke(sp.x, sp.y);
+}
+
+/**
+ * 前の点から (x, y) までなぞった範囲を塗る。ブラシの半径の分、線の左右にはみ出して塗れる。
  * - 残す: 色の層に塗る（線は上に重なって残る）
  * - 消す: 色の層に塗り、線の層を透明にする（線が消える）
  * - 線の色を変える: 線の上の画素の、線の色だけを変える
@@ -374,11 +509,12 @@ function extendStroke(x: number, y: number): void {
   refresh(Int32Array.from(fresh));
 }
 
-function endStroke(): void {
-  if (!stroke) return;
+/** ストロークを終えて、1つの操作にまとめる。何も塗らなかったときは null */
+function finishStroke(): Edit | null {
+  if (!stroke) return null;
   const s = stroke;
   stroke = null;
-  if (s.indices.length === 0) return;
+  if (s.indices.length === 0) return null;
   const edit: Edit = { indices: Int32Array.from(s.indices) };
   if (s.mode !== "recolor") {
     edit.colors = { before: Uint8ClampedArray.from(s.colorsBefore), after: s.paint };
@@ -389,7 +525,18 @@ function endStroke(): void {
       after: s.mode === "erase" ? NO_LINE : s.paint,
     };
   }
-  record(edit);
+  return edit;
+}
+
+function endStroke(): void {
+  const edit = finishStroke();
+  if (edit) record(edit);
+}
+
+/** ストロークを取り消す（Esc）。塗りかけた分は元に戻す */
+function cancelStroke(): void {
+  const edit = finishStroke();
+  if (edit) revert(edit);
 }
 
 // ---------- キャンバスの操作 ----------
@@ -424,13 +571,42 @@ function clickAt(p: { x: number; y: number }): void {
 // ---------- 拡大・縮小と平行移動 ----------
 
 const viewport = $("viewport");
-let view: View = IDENTITY;
+let view: View = { scale: 1, tx: 0, ty: 0 };
+let content = { cw: 1, ch: 1 }; // 等倍のときの紙面の表示サイズ（px）
+
+const frame = (): Frame => ({ ...content, w: viewport.clientWidth, h: viewport.clientHeight });
 
 function setView(next: View): void {
   view = next;
   stage.style.transform = `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`;
 }
-const viewSize = (): [number, number] => [viewport.clientWidth, viewport.clientHeight];
+
+/** 紙面の等倍の大きさを、いまの表示枠に合わせ直す。reset なら中央に置いた等倍に戻す */
+function layout(reset: boolean): void {
+  if (!doc) return;
+  const size = fitToFrame(doc.width, doc.height, viewport.clientWidth, viewport.clientHeight);
+  content = { cw: size.width, ch: size.height };
+  stage.style.width = `${size.width}px`;
+  stage.style.height = `${size.height}px`;
+  setView(reset ? centerView(frame()) : clampView(view, frame()));
+}
+new ResizeObserver(() => layout(false)).observe(viewport);
+
+/** 画像の点 (x, y)（画素）が表示枠の中央に来るように、scale 倍で表示する */
+function focusOn(x: number, y: number, scale: number): void {
+  if (!doc) return;
+  const f = frame();
+  const s = Math.min(40, Math.max(1, scale));
+  const px = (x / doc.width) * f.cw;
+  const py = (y / doc.height) * f.ch;
+  setView(clampView({ scale: s, tx: f.w / 2 - px * s, ty: f.h / 2 - py * s }, f));
+}
+
+/** 表示枠の中央を動かさずに拡大・縮小する（キー操作用） */
+function zoomCenter(factor: number): void {
+  if (!doc) return;
+  setView(zoomAt(view, factor, viewport.clientWidth / 2, viewport.clientHeight / 2, frame()));
+}
 
 // ホイールの縦回転は拡大・縮小、横回転は横移動（ピンチ操作は ctrl 付きのホイールとして届き、拡大・縮小になる）
 viewport.addEventListener(
@@ -439,13 +615,12 @@ viewport.addEventListener(
     if (!doc) return;
     ev.preventDefault();
     const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? viewport.clientHeight : 1;
-    const [w, h] = viewSize();
     if (!ev.ctrlKey && Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
-      setView(panBy(view, -ev.deltaX * unit, 0, w, h));
+      setView(panBy(view, -ev.deltaX * unit, 0, frame()));
     } else {
       const rect = viewport.getBoundingClientRect();
       const factor = Math.exp(-ev.deltaY * unit * (ev.ctrlKey ? 0.01 : 0.0015));
-      setView(zoomAt(view, factor, ev.clientX - rect.left, ev.clientY - rect.top, w, h));
+      setView(zoomAt(view, factor, ev.clientX - rect.left, ev.clientY - rect.top, frame()));
     }
   },
   { passive: false },
@@ -465,17 +640,6 @@ let drag: {
   click: { x: number; y: number } | null;
 } | null = null;
 
-window.addEventListener("keydown", (ev) => {
-  const t = ev.target;
-  const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
-  if (typing || ev.ctrlKey || ev.metaKey || ev.altKey) return;
-  if (ev.code === "Space") {
-    spaceDown = true;
-    ev.preventDefault();
-  } else if (ev.key === "0") {
-    setView(IDENTITY);
-  }
-});
 window.addEventListener("keyup", (ev) => {
   if (ev.code === "Space") spaceDown = false;
 });
@@ -525,8 +689,7 @@ canvas.addEventListener("pointermove", (ev) => {
       stage.classList.add("panning");
     }
     if (drag.moved) {
-      const [w, h] = viewSize();
-      setView(panBy(view, ev.clientX - drag.lastX, ev.clientY - drag.lastY, w, h));
+      setView(panBy(view, ev.clientX - drag.lastX, ev.clientY - drag.lastY, frame()));
     }
     drag.lastX = ev.clientX;
     drag.lastY = ev.clientY;
@@ -536,15 +699,17 @@ canvas.addEventListener("pointermove", (ev) => {
   const p = pixelAt(ev);
   if (!doc || !p) return;
   if (tool === "brush") {
-    // ブラシの大きさの円をカーソルにする
-    const rect = canvas.getBoundingClientRect();
-    // 見た目の大きさ ÷ 拡大率 = ステージ内での大きさ（ステージ自体が拡大されているため）
-    const d = (brushSize * rect.width) / doc.width / view.scale;
+    // ブラシの大きさの円をカーソルにする。吸着オンのときは、塗られる位置（線の中心）に出す。線から遠いときは点線で、ペンの位置に
+    const sp = snapPoint(p.x, p.y);
+    // ステージ内の座標（ステージ自体が拡大されているので、等倍の表示サイズを基準にする）
+    const d = (brushSize * content.cw) / doc.width;
+    const at = sp ?? p;
     brushCursor.hidden = spaceDown;
+    brushCursor.classList.toggle("off", sp === null);
     brushCursor.style.width = brushCursor.style.height = `${d}px`;
-    brushCursor.style.left = `${(ev.clientX - rect.left) / view.scale}px`;
-    brushCursor.style.top = `${(ev.clientY - rect.top) / view.scale}px`;
-    if (stroke) extendStroke(p.x, p.y);
+    brushCursor.style.left = `${(at.x / doc.width) * content.cw}px`;
+    brushCursor.style.top = `${(at.y / doc.height) * content.ch}px`;
+    if (stroke) advanceStroke(p.x, p.y, sp);
     return;
   }
   const x = Math.floor(p.x);
@@ -612,24 +777,14 @@ $("region-select").addEventListener("click", selectByText);
 $("region-text").addEventListener("keydown", (ev) => {
   if ((ev as KeyboardEvent).key === "Enter") selectByText();
 });
-$("select-all").addEventListener("click", () => {
-  if (!doc) return;
-  selection = new Set(Array.from({ length: doc.regions.count }, (_, k) => k + 1));
-  refreshSelectionUi();
-  drawOverlay();
-});
+$("select-all").addEventListener("click", selectAll);
 $("select-none").addEventListener("click", () => {
   selection = new Set();
   refreshSelectionUi();
   drawOverlay();
 });
 $("paint-selected").addEventListener("click", () => paintRegions(selection));
-$("show-numbers").addEventListener("click", () => {
-  showNumbers = !showNumbers;
-  $("show-numbers").classList.toggle("on", showNumbers);
-  $("show-numbers").setAttribute("aria-pressed", String(showNumbers));
-  drawOverlay();
-});
+$("show-numbers").addEventListener("click", toggleNumbers);
 
 // ---------- ツール・線の扱い ----------
 
@@ -658,9 +813,13 @@ lineModeButtons.forEach((b) =>
   }),
 );
 
+$<HTMLInputElement>("snap").addEventListener("change", (ev) => {
+  snapOn = (ev.target as HTMLInputElement).checked;
+});
+
 const brushRange = $<HTMLInputElement>("brush");
 const brushNumber = $<HTMLInputElement>("brush-n");
-function setBrush(v: number, from: HTMLInputElement): void {
+function setBrush(v: number, from: HTMLInputElement | null): void {
   brushSize = Math.min(60, Math.max(1, Math.round(Number.isFinite(v) ? v : 1)));
   if (from !== brushRange) brushRange.value = String(brushSize);
   if (from !== brushNumber) brushNumber.value = String(brushSize);
@@ -753,18 +912,123 @@ $("redo").addEventListener("click", redo);
 $("clear").addEventListener("click", clearColors);
 $("reset-lines").addEventListener("click", resetLines);
 $("save").addEventListener("click", save);
+
+// ---------- キーボードショートカット（CAD や画像編集ソフトで一般的なもの） ----------
+// Z 元に戻す / Y やり直し（Ctrl 付きも可）、F 塗りつぶし / V 複数選択 / B ブラシ、[ ] ブラシの太さ、
+// Enter 選択を塗る、Esc 選択解除、Ctrl+A すべて選択、N 番号の表示、+ - 0 表示の拡大・縮小・全体、Ctrl+S 保存。
+// 文字・数値の入力欄やリストの操作中は、入力を優先して何もしない
+
+function isTyping(t: EventTarget | null): boolean {
+  return (
+    t instanceof HTMLTextAreaElement ||
+    t instanceof HTMLSelectElement ||
+    (t instanceof HTMLInputElement && (t.type === "text" || t.type === "number"))
+  );
+}
+
+function selectAll(): void {
+  if (!doc) return;
+  selection = new Set(Array.from({ length: doc.regions.count }, (_, k) => k + 1));
+  refreshSelectionUi();
+  drawOverlay();
+}
+
+function toggleNumbers(): void {
+  showNumbers = !showNumbers;
+  $("show-numbers").classList.toggle("on", showNumbers);
+  $("show-numbers").setAttribute("aria-pressed", String(showNumbers));
+  drawOverlay();
+}
+
+function nudgeBrush(delta: number): void {
+  setBrush(brushSize + delta, null);
+}
+
 window.addEventListener("keydown", (ev) => {
-  if (!(ev.ctrlKey || ev.metaKey)) return;
-  const t = ev.target;
-  if (t instanceof HTMLInputElement && (t.type === "text" || t.type === "number")) return;
-  if (ev.key === "z") {
+  if (isTyping(ev.target) || ev.altKey || ev.isComposing) return;
+  const mod = ev.ctrlKey || ev.metaKey;
+  const control = ev.target instanceof HTMLButtonElement || ev.target instanceof HTMLInputElement;
+
+  if (mod) {
+    switch (ev.code) {
+      case "KeyZ":
+        if (ev.shiftKey) redo();
+        else undo();
+        break;
+      case "KeyY":
+        redo();
+        break;
+      case "KeyA":
+        selectAll();
+        break;
+      case "KeyS":
+        save();
+        break;
+      default:
+        return; // コピー・貼り付けなどはブラウザに任せる
+    }
     ev.preventDefault();
-    if (ev.shiftKey) redo();
-    else undo();
-  } else if (ev.key === "y") {
-    ev.preventDefault();
-    redo();
+    return;
   }
+
+  switch (ev.code) {
+    case "KeyZ":
+      undo();
+      break;
+    case "KeyY":
+      redo();
+      break;
+    case "KeyF":
+      setTool("fill");
+      break;
+    case "KeyV":
+      setTool("multi");
+      break;
+    case "KeyB":
+      setTool("brush");
+      break;
+    case "KeyN":
+      toggleNumbers();
+      break;
+    case "Escape":
+      if (stroke) cancelStroke();
+      else if (selection.size > 0) {
+        selection = new Set();
+        refreshSelectionUi();
+        drawOverlay();
+      }
+      break;
+    case "Enter":
+      if (control) return; // ボタンの操作（Enter で押す）を邪魔しない
+      paintRegions(selection);
+      break;
+    case "Space":
+      if (control) return;
+      spaceDown = true;
+      break;
+    default:
+      switch (ev.key) {
+        case "[":
+          nudgeBrush(-2);
+          break;
+        case "]":
+          nudgeBrush(2);
+          break;
+        case "+":
+        case "=":
+          zoomCenter(1.25);
+          break;
+        case "-":
+          zoomCenter(0.8);
+          break;
+        case "0":
+          layout(true);
+          break;
+        default:
+          return;
+      }
+  }
+  ev.preventDefault();
 });
 
 // ---------- 線の抽出の設定 ----------
@@ -825,64 +1089,210 @@ cropPaper.addEventListener("change", () => {
 });
 
 const thresholdInput = $<HTMLInputElement>("threshold");
+let rebuildTimer = 0;
 thresholdInput.addEventListener("input", () => {
   threshold = Number(thresholdInput.value);
   $("threshold-value").textContent = String(threshold);
   if (!doc) return;
   doc.alpha = lineAlpha(doc.dark, threshold);
-  // 領域の切れ目が変わるので、番号と選択は作り直す（塗った色は画素ごとに残る）
-  doc.regions = labelRegions(doc.dark, doc.width, doc.height, threshold);
-  selection = new Set();
-  refreshSelectionUi();
   render();
-  setStatus(`${doc.regions.count} 個の領域に番号をつけました。`);
+  // 領域の切れ目が変わるので、番号・隙間・選択は作り直す（塗った色は画素ごとに残る）。重いので、つまみの動きが止まってから
+  window.clearTimeout(rebuildTimer);
+  rebuildTimer = window.setTimeout(() => {
+    rebuildRegions();
+    setStatus(regionSummary());
+  }, 120);
 });
+
+// ---------- 線の隙間 ----------
+
+const gapList = $("gap-list");
+
+/** 隙間の候補の一覧。候補ごとに「別々 / 同じ」を選べる */
+function renderGapList(): void {
+  gapList.replaceChildren();
+  const cands = doc?.gaps?.candidates ?? [];
+  $<HTMLButtonElement>("gap-all-split").disabled = cands.length === 0;
+  $<HTMLButtonElement>("gap-all-same").disabled = cands.length === 0;
+  if (!doc || !gapOn) return;
+  if (cands.length === 0) {
+    const none = document.createElement("small");
+    none.textContent = "この設定では、隙間の候補はありません。";
+    gapList.append(none);
+    return;
+  }
+  for (const c of cands) {
+    const row = document.createElement("div");
+    row.className = "gap-row";
+    row.classList.toggle("hot", c.id === hotGap);
+    const label = document.createElement("span");
+    label.className = "grow";
+    label.title = "クリックで、その位置を拡大して表示";
+    label.textContent = `#${c.id}　幅 ${c.width}px・囲まれ具合 ${Math.round(c.enclosure * 100)}%`;
+    label.addEventListener("click", () => focusOn(c.x, c.y, 6));
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    for (const same of [false, true]) {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.classList.toggle("on", gapMerged.has(c.id) === same);
+      b.textContent = same ? "同じ" : "別々";
+      b.title = same ? "隙間をふさがず、ひとつながりの領域として扱う" : "隙間の両側を別々の領域にする";
+      b.addEventListener("click", () => setGap(c.id, same));
+      seg.append(b);
+    }
+    row.addEventListener("mouseenter", () => setHotGap(c.id));
+    row.addEventListener("mouseleave", () => setHotGap(0));
+    row.append(label, seg);
+    gapList.append(row);
+  }
+}
+
+function setHotGap(id: number): void {
+  if (hotGap === id) return;
+  hotGap = id;
+  gapList.querySelectorAll(".gap-row").forEach((el, k) => {
+    el.classList.toggle("hot", doc?.gaps?.candidates[k]?.id === id);
+  });
+  drawOverlay();
+}
+
+function setGap(id: number, same: boolean): void {
+  if (same) gapMerged.add(id);
+  else gapMerged.delete(id);
+  resolveNow();
+  setStatus(regionSummary());
+}
+
+function setAllGaps(same: boolean): void {
+  gapMerged = same ? new Set((doc?.gaps?.candidates ?? []).map((c) => c.id)) : new Set();
+  resolveNow();
+  setStatus(regionSummary());
+}
+$("gap-all-split").addEventListener("click", () => setAllGaps(false));
+$("gap-all-same").addEventListener("click", () => setAllGaps(true));
+
+const gapOnInput = $<HTMLInputElement>("gap-on");
+const gapWidthInput = $<HTMLInputElement>("gap-width");
+const gapEncInput = $<HTMLInputElement>("gap-enc");
+let gapTimer = 0;
+function onGapSettings(): void {
+  gapOn = gapOnInput.checked;
+  gapWidth = Number(gapWidthInput.value);
+  gapEnclosure = Number(gapEncInput.value) / 100;
+  $("gap-width-value").textContent = `${gapWidth} px`;
+  $("gap-enc-value").textContent = `${gapEncInput.value}%`;
+  gapWidthInput.disabled = gapEncInput.disabled = !gapOn;
+  window.clearTimeout(gapTimer);
+  gapTimer = window.setTimeout(() => {
+    analyzeNow();
+    setStatus(regionSummary());
+  }, 120);
+}
+for (const el of [gapOnInput, gapWidthInput, gapEncInput]) el.addEventListener("input", onGapSettings);
 
 // ---------- 色（パレット・スペクトル・RGB + 透明度）。RGB の値を出すのはここだけ ----------
 
-const picker = $<HTMLInputElement>("picker");
-const channels = (["r", "g", "b", "a"] as const).map((id) => ({
-  number: $<HTMLInputElement>(id),
-  range: $<HTMLInputElement>(`${id}-range`),
-  pct: $(`${id}-pct`),
-}));
+const svPanel = $("sv");
+const svKnob = $("sv-knob");
+const hueRange = $<HTMLInputElement>("hue");
+const rgbInputs = (["r", "g", "b"] as const).map((id) => $<HTMLInputElement>(id));
+const alphaNumber = $<HTMLInputElement>("a");
+const alphaRange = $<HTMLInputElement>("a-range");
+/** 色相・彩度・明度。黒や灰色（彩度 0）にしても色相を忘れないよう、RGB とは別に持つ */
+let hsv: Hsv = rgbToHsv(color[0], color[1], color[2]);
 
-function setColor(next: Rgba, from?: HTMLElement): void {
+/**
+ * いまの色を決めて、パネルの各部分に反映する。from は操作中の部品（その部品の値は書き換えない）。
+ * パネル（四角・色相）から決めたときは hsv も渡して、色相が丸め誤差でずれないようにする。
+ */
+function setColor(next: Rgba, from?: HTMLElement, fromHsv?: Hsv): void {
   color = [clampChannel(next[0]), clampChannel(next[1]), clampChannel(next[2]), clampChannel(next[3])];
-  const [r, g, b] = color;
+  const [r, g, b, a] = color;
+  if (fromHsv) {
+    hsv = fromHsv;
+  } else {
+    const t = rgbToHsv(r, g, b);
+    hsv = { h: t.s === 0 || t.v === 0 ? hsv.h : t.h, s: t.s, v: t.v };
+  }
   $("swatch").style.background = toCss(color);
-  if (from !== picker) picker.value = toHex6(color);
-  const bal = channelBalance(color);
-  const pcts = [bal.r, bal.g, bal.b, bal.a];
-  channels.forEach((c, i) => {
-    if (from !== c.number) c.number.value = String(color[i]);
-    if (from !== c.range) c.range.value = String(color[i]);
-    c.pct.textContent = `${pcts[i]!.toFixed(1)}%`;
+  const [hr, hg, hb] = hsvToRgb(hsv.h, 1, 1);
+  svPanel.style.backgroundColor = `rgb(${hr}, ${hg}, ${hb})`;
+  svKnob.style.left = `${hsv.s * 100}%`;
+  svKnob.style.top = `${(1 - hsv.v) * 100}%`;
+  hueRange.value = String(Math.round(hsv.h));
+  hueRange.style.setProperty("--hue-thumb", `rgb(${hr}, ${hg}, ${hb})`);
+  rgbInputs.forEach((el, i) => {
+    if (from !== el) el.value = String(color[i]);
   });
-  // つまみの下地を、その成分を動かしたときの色の変化にする
-  const track = (a: string, z: string): string => `linear-gradient(to right, ${a}, ${z})`;
-  channels[0]!.range.style.setProperty("--track", track(`rgb(0, ${g}, ${b})`, `rgb(255, ${g}, ${b})`));
-  channels[1]!.range.style.setProperty("--track", track(`rgb(${r}, 0, ${b})`, `rgb(${r}, 255, ${b})`));
-  channels[2]!.range.style.setProperty("--track", track(`rgb(${r}, ${g}, 0)`, `rgb(${r}, ${g}, 255)`));
-  channels[3]!.range.style.setProperty(
+  if (from !== alphaNumber) alphaNumber.value = String(a);
+  if (from !== alphaRange) alphaRange.value = String(a);
+  $("a-pct").textContent = `${channelBalance(color).a.toFixed(1)}%`;
+  // 透明度のつまみの下地: 透明 → いまの色
+  alphaRange.style.setProperty(
     "--track",
-    `${track(`rgba(${r}, ${g}, ${b}, 0)`, `rgb(${r}, ${g}, ${b})`)}, var(--checker)`,
+    `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0), rgb(${r}, ${g}, ${b})), var(--checker)`,
   );
 }
 
-channels.forEach((c, i) => {
-  const onInput = (el: HTMLInputElement) => () => {
+rgbInputs.forEach((el, i) => {
+  el.addEventListener("input", () => {
     const next: [number, number, number, number] = [...color];
     next[i] = Number(el.value);
     setColor(next, el);
-  };
-  c.number.addEventListener("input", onInput(c.number));
-  c.range.addEventListener("input", onInput(c.range));
+  });
 });
-picker.addEventListener("input", () => {
-  const rgb = parseHex(picker.value);
-  if (rgb) setColor([rgb[0], rgb[1], rgb[2], color[3]], picker); // 透明度は変えない
+for (const el of [alphaNumber, alphaRange]) {
+  el.addEventListener("input", () => setColor([color[0], color[1], color[2], Number(el.value)], el));
+}
+
+// 色の四角（横 = 彩度、縦 = 明度）と色相のスライダー。色の四角はドラッグで位置を選ぶ
+function pickFromSquare(ev: PointerEvent): void {
+  const rect = svPanel.getBoundingClientRect();
+  const s = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+  const v = 1 - Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height));
+  const [r, g, b] = hsvToRgb(hsv.h, s, v);
+  setColor([r, g, b, color[3]], svPanel, { h: hsv.h, s, v });
+}
+let squareDrag = false;
+svPanel.addEventListener("pointerdown", (ev) => {
+  squareDrag = true;
+  svPanel.setPointerCapture(ev.pointerId);
+  pickFromSquare(ev);
 });
+svPanel.addEventListener("pointermove", (ev) => {
+  if (squareDrag) pickFromSquare(ev);
+});
+for (const type of ["pointerup", "pointercancel"] as const) {
+  svPanel.addEventListener(type, () => {
+    squareDrag = false;
+  });
+}
+hueRange.addEventListener("input", () => {
+  const h = Number(hueRange.value);
+  const [r, g, b] = hsvToRgb(h, hsv.s, hsv.v);
+  setColor([r, g, b, color[3]], hueRange, { h, s: hsv.s, v: hsv.v });
+});
+
+// スポイト（画面から色を拾う）。ブラウザが対応していなければ隠す
+type EyeDropperCtor = new () => { open(): Promise<{ sRGBHex: string }> };
+const EyeDropperApi = (window as unknown as { EyeDropper?: EyeDropperCtor }).EyeDropper;
+const eyedropper = $<HTMLButtonElement>("eyedropper");
+if (EyeDropperApi) {
+  eyedropper.addEventListener("click", () => {
+    new EyeDropperApi()
+      .open()
+      .then((res) => {
+        const rgb = parseHex(res.sRGBHex);
+        if (rgb) setColor([rgb[0], rgb[1], rgb[2], color[3]]);
+      })
+      .catch(() => {
+        /* キャンセル */
+      });
+  });
+} else {
+  eyedropper.hidden = true;
+}
 
 // パレット: 押すとその色（透明度はそのまま）
 $("palette").replaceChildren(
@@ -929,7 +1339,7 @@ $<HTMLInputElement>("file").addEventListener("change", (ev) => {
 $("sample-house").addEventListener("click", () => void loadSample("house"));
 $("sample-rings").addEventListener("click", () => void loadSample("rings"));
 
-for (const el of [empty, stage]) {
+for (const el of [empty, viewport]) {
   el.addEventListener("dragover", (ev) => {
     ev.preventDefault();
     el.classList.add("dragging");
