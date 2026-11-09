@@ -6,257 +6,292 @@
     <title>nurie</title>
     <style>
       :root {
-        --bg: #f4f4f2;
-        --panel: #ffffff;
-        --border: #d8d8d4;
-        --text: #222;
-        --muted: #666;
+        --bg: #f4f5f7;
+        --panel: #fff;
+        --line: #d9dce1;
+        --text: #1d2330;
+        --muted: #6b7280;
         --accent: #2563eb;
-        --checker: repeating-conic-gradient(#e8e8e8 0% 25%, #fff 0% 50%) 0 0 / 16px 16px;
+        --accent-soft: #dbeafe;
+        --danger: #dc2626;
+        --stage: #6b7280;
+        --checker: repeating-conic-gradient(#e5e7eb 0% 25%, #fff 0% 50%) 0 0 / 14px 14px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14161a;
+          --panel: #1d2026;
+          --line: #343841;
+          --text: #e6e8ec;
+          --muted: #9aa1ad;
+          --accent: #60a5fa;
+          --accent-soft: #1e3a5f;
+          --stage: #3b3f47;
+          --checker: repeating-conic-gradient(#3a3d44 0% 25%, #2b2e34 0% 50%) 0 0 / 14px 14px;
+        }
       }
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      html, body { height: 100%; margin: 0; }
       body {
-        margin: 0;
-        font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+        display: flex;
+        flex-direction: column;
         background: var(--bg);
         color: var(--text);
+        font: 14px/1.4 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
       }
-      #app { display: flex; min-height: 100vh; }
-      aside {
-        width: 320px;
-        flex: none;
-        padding: 16px;
+      .spacer { flex: 1; }
+      .sep { background: var(--line); align-self: stretch; width: 1px; margin: 0 4px; }
+      .hint { color: var(--muted); font-size: 12px; }
+      small { color: var(--muted); font-size: 12px; }
+
+      /* 上部のバーとツールバー */
+      .topbar, .toolbar {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+        padding: 8px 14px;
         background: var(--panel);
-        border-right: 1px solid var(--border);
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        overflow-y: auto;
-        max-height: 100vh;
-        position: sticky;
-        top: 0;
+        border-bottom: 1px solid var(--line);
       }
-      h1 { font-size: 20px; margin: 0; }
-      section { display: flex; flex-direction: column; gap: 8px; }
-      h2 { font-size: 13px; margin: 0; color: var(--muted); font-weight: 600; }
-      button, input[type="file"]::file-selector-button {
-        font: inherit;
-        padding: 6px 10px;
-        border: 1px solid var(--border);
+      .topbar h1 { margin: 0 8px 0 0; font-size: 16px; }
+      .privacy { color: var(--muted); font-size: 12px; }
+      .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .group > label { display: flex; align-items: center; gap: 6px; }
+
+      .btn {
+        font: inherit; color: inherit; cursor: pointer;
+        background: var(--panel);
+        border: 1px solid var(--line);
         border-radius: 6px;
-        background: #fafafa;
-        cursor: pointer;
+        padding: 5px 11px;
       }
-      button:hover:not(:disabled) { background: #eee; }
-      button:disabled { opacity: 0.45; cursor: default; }
-      button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-      button.primary:hover:not(:disabled) { background: #1d4ed8; }
-      .row { display: flex; gap: 8px; align-items: center; }
-      .row > * { min-width: 0; }
-      .grow { flex: 1; }
-      .channel { display: grid; grid-template-columns: 16px 1fr 72px; gap: 8px; align-items: center; }
-      input[type="number"], input[type="text"], select {
-        font: inherit;
-        padding: 4px 6px;
-        border: 1px solid var(--border);
+      .btn:hover:not(:disabled) { border-color: var(--accent); }
+      .btn:disabled { opacity: 0.4; cursor: default; }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+      .btn.on { background: var(--accent-soft); border-color: var(--accent); }
+      .seg { display: flex; }
+      .seg .btn { border-radius: 0; margin-left: -1px; }
+      .seg .btn:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+      .seg .btn:last-child { border-radius: 0 6px 6px 0; }
+      .seg .btn.on { position: relative; z-index: 1; }
+
+      input[type="text"], input[type="number"] {
+        font: inherit; color: inherit;
+        background: var(--bg);
+        border: 1px solid var(--line);
         border-radius: 6px;
-        width: 100%;
+        padding: 4px 8px;
       }
-      .swatch {
-        width: 40px; height: 40px; flex: none;
-        border: 1px solid var(--border); border-radius: 6px;
-        background: var(--checker);
-        position: relative; overflow: hidden;
-      }
-      .swatch > i { position: absolute; inset: 0; }
-      #picker { width: 40px; height: 40px; padding: 0; border: none; background: none; flex: none; }
-      #recent { display: flex; flex-wrap: wrap; gap: 6px; }
-      #recent .swatch { width: 26px; height: 26px; padding: 0; border-radius: 4px; cursor: pointer; }
-      #balance-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: #eee; }
-      #balance-bar i:nth-child(1) { background: #e11d48; }
-      #balance-bar i:nth-child(2) { background: #16a34a; }
-      #balance-bar i:nth-child(3) { background: #2563eb; }
-      #balance-text { font-variant-numeric: tabular-nums; font-size: 13px; line-height: 1.6; }
-      .tools label { display: block; cursor: pointer; }
-      .tools small { display: block; margin-left: 24px; }
-      small { color: var(--muted); }
-      main {
-        flex: 1;
-        min-width: 0;
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        align-items: center;
+      input[type="file"] { display: none; }
+
+      /* 本体: 画像 | 右のパネル */
+      .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 0; }
+      .canvas-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+      .stage-scroll {
+        flex: 1; overflow: auto; padding: 16px;
+        background: var(--stage);
+        display: flex; align-items: flex-start; justify-content: center;
       }
       #viewport { max-width: 100%; overflow: hidden; }
-      #stage {
-        position: relative;
-        max-width: 100%;
-        transform-origin: 0 0;
-        background: var(--checker);
-        border: 1px solid var(--border);
-        line-height: 0;
-      }
-      #canvas { display: block; max-width: 100%; max-height: calc(100vh - 72px); width: auto; height: auto; touch-action: none; }
+      #stage { transform-origin: 0 0; position: relative; line-height: 0; background: var(--checker); box-shadow: 0 2px 12px #0006; }
+      #canvas { display: block; max-width: 100%; max-height: calc(100vh - 190px); width: auto; height: auto; touch-action: none; }
       #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-      #stage[data-tool="brush"] #canvas { cursor: cell; }
+      #stage[data-tool="brush"] #canvas { cursor: none; }
       #stage[data-tool="fill"] #canvas, #stage[data-tool="multi"] #canvas { cursor: crosshair; }
-      #stage.panning #canvas { cursor: grabbing; }
-      #status {
-        min-height: 1.6em;
-        font-size: 13px;
-        color: var(--muted);
-        font-variant-numeric: tabular-nums;
-      }
-      #empty {
-        padding: 80px 40px;
-        text-align: center;
-        color: var(--muted);
-        border: 2px dashed var(--border);
-        border-radius: 12px;
-        background: var(--panel);
+      #stage.panning #canvas { cursor: grabbing !important; }
+      #brush-cursor {
+        position: absolute; pointer-events: none; border-radius: 50%;
+        border: 1px solid #000; box-shadow: 0 0 0 1px #fff;
+        transform: translate(-50%, -50%);
       }
       #stage.dragging, #empty.dragging { outline: 3px solid var(--accent); }
-      @media (max-width: 720px) {
-        #app { flex-direction: column; }
-        aside { width: auto; max-height: none; position: static; border-right: none; border-bottom: 1px solid var(--border); }
+      #empty {
+        margin: auto; padding: 70px 40px; text-align: center; line-height: 1.8;
+        color: var(--muted);
+        background: var(--panel);
+        border: 2px dashed var(--line);
+        border-radius: 12px;
+      }
+      #status {
+        display: flex; align-items: center; gap: 8px;
+        min-height: 32px; padding: 4px 14px;
+        background: var(--panel); border-top: 1px solid var(--line);
+        color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
+      }
+      .chip { width: 14px; height: 14px; border: 1px solid var(--line); border-radius: 3px; background: var(--checker); position: relative; overflow: hidden; flex: none; }
+      .chip > i { position: absolute; inset: 0; }
+
+      /* 右のパネル */
+      .side { overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); }
+      .card { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+      .card h2 { margin: 0; font-size: 12px; color: var(--muted); font-weight: 600; }
+
+      /* 色パネル */
+      .current { display: flex; align-items: center; gap: 10px; }
+      .current .chip { width: 44px; height: 44px; border-radius: 8px; }
+      #picker { width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; flex: none; }
+      #palette { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; }
+      .sw {
+        aspect-ratio: 1; min-width: 0; padding: 0; cursor: pointer;
+        border: 1px solid var(--line); border-radius: 5px;
+      }
+      .sw:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .sw.recent { background: var(--checker); position: relative; overflow: hidden; }
+      .sw.recent > i { position: absolute; inset: 0; }
+      #recent { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; min-height: 0; }
+      .ch { display: grid; grid-template-columns: 14px 1fr 58px 46px; gap: 8px; align-items: center; }
+      .ch span:first-child { font-weight: 600; }
+      .ch .pct { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+      .ch input[type="number"] { width: 100%; padding: 3px 6px; }
+      input[type="range"].grad {
+        -webkit-appearance: none; appearance: none; height: 10px; border-radius: 5px;
+        background: var(--track, var(--line)); outline: none; margin: 0; width: 100%;
+      }
+      input[type="range"].grad::-webkit-slider-thumb {
+        -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+        background: #fff; border: 2px solid var(--accent); cursor: pointer;
+      }
+      input[type="range"].grad::-moz-range-thumb {
+        width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); cursor: pointer;
+      }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .grow { flex: 1; min-width: 0; }
+      input[type="range"] { accent-color: var(--accent); }
+
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; grid-auto-rows: auto; }
+        .side { border-left: none; border-top: 1px solid var(--line); }
+        #canvas { max-height: 70vh; }
       }
     </style>
   </head>
   <body>
-    <div id="app">
-      <aside>
-        <h1>nurie</h1>
+    <header class="topbar">
+      <h1>nurie</h1>
+      <span class="privacy" title="画像はブラウザの中だけで処理し、外には送りません">🔒 ローカル処理のみ・送信なし</span>
+      <div class="spacer"></div>
+      <label class="btn" for="file">画像を開く</label>
+      <input id="file" type="file" accept="image/*" />
+      <button class="btn" id="sample-house">サンプル: 家</button>
+      <button class="btn" id="sample-rings">サンプル: 輪</button>
+      <span class="sep"></span>
+      <button class="btn" id="undo" disabled title="元に戻す (Ctrl+Z)">⟲ 元に戻す</button>
+      <button class="btn" id="redo" disabled title="やり直し (Ctrl+Shift+Z)">⟳ やり直し</button>
+      <button class="btn primary" id="save" disabled title="透明度つきの PNG で保存">⬇ PNG で保存</button>
+    </header>
 
-        <section>
-          <h2>画像</h2>
-          <input id="file" type="file" accept="image/*" />
-          <div class="row">
-            <button id="sample-house" class="grow">サンプル: 家</button>
-            <button id="sample-rings" class="grow">サンプル: 輪</button>
-          </div>
-          <small>ドラッグ＆ドロップ、貼り付け（Ctrl+V）でも読み込めます。</small>
-        </section>
+    <div class="toolbar" id="toolbar">
+      <div class="group seg" role="group" aria-label="ツール">
+        <button class="btn on" data-tool="fill" title="クリックした領域をすぐ塗る">▣ 塗りつぶし</button>
+        <button class="btn" data-tool="multi" title="領域を選んで、まとめて同じ色で塗る">▦ 複数選択</button>
+        <button class="btn" data-tool="brush" title="ドラッグで線に沿って塗る（線からはみ出してもよい）">✎ 線に沿って塗る</button>
+      </div>
+      <span class="sep"></span>
 
-        <section>
-          <h2>線の抽出（黒い線だけ拾う）</h2>
-          <label class="row"><input type="radio" name="extract" value="auto" checked />自動（写真向け）</label>
-          <small>影・机・他の物が映っていても、細い黒い線だけを取り出します。</small>
-          <label class="row"><input type="radio" name="extract" value="simple" />単純（スキャン・デジタルの線画向け）</label>
-          <small>画素の黒さをそのまま使います。太い黒ベタも黒として扱います。</small>
-          <label class="row"><input id="crop-paper" type="checkbox" checked />紙の部分だけを切り出す</label>
-          <div class="channel" style="grid-template-columns: auto 1fr 56px">
-            <span>線の太さ</span><input id="line-width" type="range" min="3" max="60" value="12" /><input id="line-width-n" type="number" min="3" max="60" value="12" />
-          </div>
-          <small>線の太さ（px）の上限の目安。これより広い暗い部分（影・机）は線にしません。線が欠けるときは大きく、影が線になるときは小さくします。</small>
-          <h2>線の濃さのしきい値</h2>
-          <div class="row">
-            <input id="threshold" type="range" min="10" max="255" value="128" class="grow" />
-            <span id="threshold-value">128</span>
-          </div>
-          <small>小さいほど薄い線まで拾います。塗りがはみ出す（線が途切れている）ときは小さくしてみてください。しきい値を変えると領域の番号と選択は作り直されます。</small>
-        </section>
+      <div class="group" data-for="fill">
+        <span class="hint">領域をクリックすると、いまの色で塗ります。</span>
+      </div>
 
-        <section>
-          <h2>色（RGB + 透明度）</h2>
-          <div class="row">
-            <input id="picker" type="color" value="#ff0000" aria-label="色を選ぶ" />
-            <div class="swatch"><i id="swatch"></i></div>
-            <input id="hex" type="text" value="#ff0000" spellcheck="false" aria-label="16進数の色（#rrggbb または #rrggbbaa）" />
-          </div>
-          <div class="channel">
-            <span>R</span><input id="r-range" type="range" min="0" max="255" value="255" /><input id="r" type="number" min="0" max="255" value="255" />
-          </div>
-          <div class="channel">
-            <span>G</span><input id="g-range" type="range" min="0" max="255" value="0" /><input id="g" type="number" min="0" max="255" value="0" />
-          </div>
-          <div class="channel">
-            <span>B</span><input id="b-range" type="range" min="0" max="255" value="0" /><input id="b" type="number" min="0" max="255" value="0" />
-          </div>
-          <div class="channel">
-            <span>A</span><input id="a-range" type="range" min="0" max="255" value="255" /><input id="a" type="number" min="0" max="255" value="255" />
-          </div>
-          <div id="balance-bar" aria-hidden="true"><i></i><i></i><i></i></div>
-          <div id="balance-text"></div>
-          <small>バランスは R+G+B を 100% としたときの各色の割合。A は不透明度（0 = 透明）。</small>
-          <h2>最近使った色</h2>
-          <div id="recent"></div>
-        </section>
+      <div class="group" data-for="multi" hidden>
+        <button class="btn primary" id="paint-selected" disabled>選択を塗る</button>
+        <button class="btn" id="select-all" disabled>すべて選択</button>
+        <button class="btn" id="select-none" disabled>選択解除</button>
+        <label title="領域の番号で選ぶ（例: 1, 3, 5-8）">番号
+          <input id="region-text" type="text" placeholder="1, 3, 5-8" spellcheck="false" style="width: 9em" />
+        </label>
+        <button class="btn" id="region-select">選択</button>
+        <span class="hint" id="selection-text"></span>
+      </div>
 
-        <section class="tools">
-          <h2>ツール</h2>
-          <label><input type="radio" name="tool" value="fill" checked />塗りつぶし
-            <small>クリックした領域をすぐ塗る</small></label>
-          <label><input type="radio" name="tool" value="multi" />複数選択
-            <small>クリックで選択・解除。「選択を塗る」で同じ色にまとめて塗る</small></label>
-          <label><input type="radio" name="tool" value="brush" />線に沿って塗る
-            <small>ドラッグでなぞった所の黒い線だけを塗る</small></label>
-          <div class="channel" style="grid-template-columns: auto 1fr 56px">
-            <span>太さ</span><input id="brush" type="range" min="1" max="60" value="8" /><input id="brush-n" type="number" min="1" max="60" value="8" />
-          </div>
-        </section>
+      <div class="group" data-for="brush" hidden>
+        <label>太さ
+          <input id="brush" type="range" min="1" max="60" value="12" />
+          <input id="brush-n" type="number" min="1" max="60" value="12" style="width: 4.2em" />
+          <span class="hint">px</span>
+        </label>
+        <span class="sep"></span>
+        <span class="hint">下の線を</span>
+        <div class="seg" role="group" aria-label="線の扱い">
+          <button class="btn on" data-linemode="keep" title="線の下に色を敷く。線は残る">残す</button>
+          <button class="btn" data-linemode="erase" title="なぞった所の線を消して、色で塗りつぶす">消す</button>
+          <button class="btn" data-linemode="recolor" title="なぞった所の線そのものの色を変える（線の上だけ）">線の色を変える</button>
+        </div>
+      </div>
 
-        <section>
-          <h2>領域の番号</h2>
-          <label class="row"><input id="show-numbers" type="checkbox" />番号を画像に表示する</label>
-          <div class="row">
-            <input id="region-text" type="text" class="grow" placeholder="例: 1, 3, 5-8" spellcheck="false" aria-label="領域の番号" />
-            <button id="region-select">選択</button>
-          </div>
-          <div id="selection-text" class="row"><small></small></div>
-          <div class="row">
-            <button id="paint-selected" class="primary grow" disabled>選択を塗る</button>
-          </div>
-          <div class="row">
-            <button id="select-all" class="grow" disabled>すべて選択</button>
-            <button id="select-none" class="grow" disabled>選択を解除</button>
-          </div>
-        </section>
+      <div class="spacer"></div>
+      <button class="btn" id="show-numbers" aria-pressed="false" title="領域の番号を画像に重ねて表示">＃ 番号を表示</button>
+    </div>
 
-        <section>
-          <h2>操作</h2>
-          <div class="row">
-            <button id="undo" class="grow" disabled>元に戻す</button>
-            <button id="redo" class="grow" disabled>やり直し</button>
+    <div class="layout">
+      <div class="canvas-pane">
+        <div class="stage-scroll">
+          <div id="empty">
+            画像を開くか、ここにドラッグ＆ドロップ（貼り付けも可）してください。<br />
+            上の「サンプル」からも試せます。
           </div>
-          <button id="reset-lines" disabled>線の色を黒に戻す</button>
-          <button id="clear" disabled>色をすべて消す</button>
-          <div class="row">
-            <label class="grow"><small>形式</small>
-              <select id="export-format">
-                <option value="png">PNG（透明度つき）</option>
-                <option value="webp">WebP（透明度つき）</option>
-                <option value="jpeg">JPEG（白背景）</option>
-              </select>
-            </label>
-            <label class="grow"><small>縦横比</small>
-              <select id="export-aspect">
-                <option value="original">元のまま</option>
-                <option value="1:1">1:1</option>
-                <option value="4:3">4:3</option>
-                <option value="3:4">3:4</option>
-                <option value="3:2">3:2</option>
-                <option value="2:3">2:3</option>
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-              </select>
-            </label>
-          </div>
-          <button id="save" disabled>画像を保存</button>
-        </section>
-      </aside>
-
-      <main>
-        <div id="empty">画像を選ぶか、ここにドラッグ＆ドロップしてください。<br />左の「サンプル」からも試せます。</div>
-        <div id="viewport">
-          <div id="stage" hidden data-tool="fill">
-            <canvas id="canvas"></canvas>
-            <canvas id="overlay"></canvas>
+          <div id="viewport">
+            <div id="stage" hidden data-tool="fill">
+              <canvas id="canvas"></canvas>
+              <canvas id="overlay"></canvas>
+              <div id="brush-cursor" hidden></div>
+            </div>
           </div>
         </div>
         <div id="status"></div>
-      </main>
+      </div>
+
+      <aside class="side">
+        <section class="card">
+          <h2>色</h2>
+          <div class="current">
+            <div class="chip"><i id="swatch"></i></div>
+            <input id="picker" type="color" value="#e53935" aria-label="色を選ぶ（スペクトル）" title="スペクトルから選ぶ" />
+            <small>パレットかスペクトルから選び、下の値で細かく調整できます。</small>
+          </div>
+          <div id="palette" role="group" aria-label="パレット"></div>
+          <h2>最近使った色</h2>
+          <div id="recent"></div>
+          <h2>RGB・透明度（0〜255。右は R+G+B に対する割合、A は不透明度）</h2>
+          <div class="ch">
+            <span>R</span><input id="r-range" class="grad" type="range" min="0" max="255" /><input id="r" type="number" min="0" max="255" /><span class="pct" id="r-pct"></span>
+          </div>
+          <div class="ch">
+            <span>G</span><input id="g-range" class="grad" type="range" min="0" max="255" /><input id="g" type="number" min="0" max="255" /><span class="pct" id="g-pct"></span>
+          </div>
+          <div class="ch">
+            <span>B</span><input id="b-range" class="grad" type="range" min="0" max="255" /><input id="b" type="number" min="0" max="255" /><span class="pct" id="b-pct"></span>
+          </div>
+          <div class="ch">
+            <span>A</span><input id="a-range" class="grad" type="range" min="0" max="255" /><input id="a" type="number" min="0" max="255" /><span class="pct" id="a-pct"></span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>線の抽出</h2>
+          <div class="seg" role="group" aria-label="抽出の方法">
+            <button class="btn on grow" data-extract="auto" title="影・机・他の物が映っていても、細い黒い線だけを取り出す">自動（写真向け）</button>
+            <button class="btn grow" data-extract="simple" title="画素の黒さをそのまま使う。太い黒ベタも黒として扱う">単純（スキャン向け）</button>
+          </div>
+          <label class="row"><input id="crop-paper" type="checkbox" checked />紙の部分だけを切り出す</label>
+          <div class="row">
+            <span>線の太さ</span>
+            <input id="line-width" class="grow" type="range" min="3" max="60" value="12" />
+            <input id="line-width-n" type="number" min="3" max="60" value="12" style="width: 4.2em" />
+          </div>
+          <small>線として拾う太さの上限（px）。これより広い暗い部分（影・机）は線にしません。</small>
+          <div class="row">
+            <span>しきい値</span>
+            <input id="threshold" class="grow" type="range" min="10" max="255" value="128" />
+            <span id="threshold-value" style="width: 2.4em; text-align: right">128</span>
+          </div>
+          <small>小さいほど薄い線まで拾います。塗りがはみ出す（線が途切れている）ときは小さくします。変えると領域の番号と選択は作り直されます。</small>
+        </section>
+
+        <section class="card">
+          <h2>消去</h2>
+          <button class="btn" id="reset-lines" disabled>線の色・消した線を元に戻す</button>
+          <button class="btn" id="clear" disabled>色をすべて消す</button>
+        </section>
+      </aside>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
