@@ -44,8 +44,8 @@ describe("darkness", () => {
 });
 
 describe("lineAlpha", () => {
-  it("しきい値以上は完全な黒、半分以下は線なし、間はなめらか", () => {
-    const a = lineAlpha(Uint8Array.from([255, 128, 100, 64, 0]), 128);
+  it("しきい値以上は完全な黒、7割以下は線なし、間はなめらか", () => {
+    const a = lineAlpha(Uint8Array.from([255, 128, 100, 89, 0]), 128);
     expect(a[0]).toBe(255);
     expect(a[1]).toBe(255);
     expect(a[2]).toBeGreaterThan(0);

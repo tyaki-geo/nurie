@@ -35,12 +35,13 @@ function limit(threshold: number): number {
 }
 
 /**
- * 線の濃さ（0〜255）。黒さがしきい値以上なら完全な黒、しきい値の半分以下なら線なし、
+ * 線の濃さ（0〜255）。黒さがしきい値以上なら完全な黒、しきい値の 7 割以下なら線なし、
  * その間はなめらかにつなぐ（縁のなめらかさを残すため）。
+ * 写真では、近い2本の線にはさまれた細い紙の部分が、ぼけて薄く暗く写る。それを線にしないよう、なめらかな幅は狭くしてある。
  */
 export function lineAlpha(dark: Uint8Array, threshold: number): Uint8Array {
   const t = limit(threshold);
-  const lo = t / 2;
+  const lo = t * 0.7;
   const out = new Uint8Array(dark.length);
   for (let i = 0; i < dark.length; i++) {
     const d = dark[i]!;

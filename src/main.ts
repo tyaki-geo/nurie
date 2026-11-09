@@ -3,7 +3,6 @@ import {
   channelBalance,
   clampChannel,
   compose,
-  computeDarkness,
   fillColor,
   fitSize,
   lineAlpha,
@@ -13,6 +12,7 @@ import {
   toHex6,
   type Rgba,
 } from "./lib/lineart";
+import { defaultMaxLineWidth, extractFromPhoto, extractSimple } from "./lib/photo";
 import {
   formatRegionList,
   labelRegions,
@@ -73,6 +73,10 @@ let recent: Rgba[] = [];
 
 // ---------- 画像の読み込み ----------
 
+/** 読み込んだ画像（作業用の大きさに縮小したもの）。抽出の設定を変えたときに作り直すために持っておく */
+let source: { data: Uint8ClampedArray; width: number; height: number; name: string } | null = null;
+let mode: "auto" | "simple" = "auto";
+
 async function loadBlob(blob: Blob, name: string): Promise<void> {
   let bitmap: ImageBitmap;
   try {
@@ -82,16 +86,37 @@ async function loadBlob(blob: Blob, name: string): Promise<void> {
     return;
   }
   const { width, height } = fitSize(bitmap.width, bitmap.height, MAX_SIDE);
-  canvas.width = overlay.width = width;
-  canvas.height = overlay.height = height;
-  // 透明な部分は白として扱うので、白地に描いて黒さを測る
+  // 透明な部分は白として扱うので、白地に描いて読み取る
+  canvas.width = width;
+  canvas.height = height;
+  ctx.imageSmoothingQuality = "high";
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
 
-  const source = ctx.getImageData(0, 0, width, height);
-  const dark = computeDarkness(source.data);
+  source = { data: ctx.getImageData(0, 0, width, height).data, width, height, name };
+  const w = defaultMaxLineWidth(width, height);
+  appliedLineWidth = w;
+  syncExtractUi();
+  processSource();
+}
+
+/** 読み込んだ画像から、いまの設定で線を抽出して作業用のデータを作る（塗った色・選択・履歴は作り直しになる） */
+function processSource(): void {
+  if (!source) return;
+  const maxLineWidth = Number($<HTMLInputElement>("line-width").value);
+  const extracted =
+    mode === "auto"
+      ? extractFromPhoto(source.data, source.width, source.height, {
+          maxLineWidth,
+          cropPaper: $<HTMLInputElement>("crop-paper").checked,
+        })
+      : extractSimple(source.data, source.width, source.height);
+  const { width, height, dark } = extracted;
+
+  canvas.width = overlay.width = width;
+  canvas.height = overlay.height = height;
   const colors = new Uint8ClampedArray(width * height * 4);
   const lines = new Uint8ClampedArray(width * height * 4);
   fillColor(colors, WHITE);
@@ -105,7 +130,7 @@ async function loadBlob(blob: Blob, name: string): Promise<void> {
     colors,
     lines,
     out: ctx.createImageData(width, height),
-    name: name.replace(/\.[^.]+$/, "") || "nurie",
+    name: source.name.replace(/\.[^.]+$/, "") || "nurie",
   };
   undoStack = [];
   redoStack = [];
@@ -114,8 +139,19 @@ async function loadBlob(blob: Blob, name: string): Promise<void> {
   refreshSelectionUi();
   empty.hidden = true;
   stage.hidden = false;
-  status.textContent = `${doc.regions.count} 個の領域に番号をつけました。`;
+  const paper =
+    mode !== "auto" || !$<HTMLInputElement>("crop-paper").checked
+      ? ""
+      : extracted.paperFound
+        ? "紙の部分を切り出しました。"
+        : "紙の範囲は見つからなかったので、全体から線を抽出しました。";
+  status.textContent = `${paper}${doc.regions.count} 個の領域に番号をつけました。`;
   updateButtons();
+}
+
+/** 抽出の設定を変えると塗った色が消える。消えてよいか確認する（塗った内容がなければ確認しない） */
+function confirmDiscard(): boolean {
+  return undoStack.length === 0 || confirm("設定を変えると、塗った色は消えます。続けますか？");
 }
 
 async function loadFile(file: File): Promise<void> {
@@ -497,6 +533,69 @@ window.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     redo();
   }
+});
+
+// ---------- 線の抽出の設定 ----------
+
+const lineWidthRange = $<HTMLInputElement>("line-width");
+const lineWidthNumber = $<HTMLInputElement>("line-width-n");
+const cropPaper = $<HTMLInputElement>("crop-paper");
+let appliedLineWidth = Number(lineWidthRange.value);
+let appliedCrop = cropPaper.checked;
+
+/** 設定の部品を、いまの状態（モード）に合わせる */
+function syncExtractUi(): void {
+  document.querySelectorAll<HTMLInputElement>('input[name="extract"]').forEach((r) => {
+    r.checked = r.value === mode;
+  });
+  lineWidthRange.value = lineWidthNumber.value = String(appliedLineWidth);
+  cropPaper.checked = appliedCrop;
+  const auto = mode === "auto";
+  lineWidthRange.disabled = lineWidthNumber.disabled = cropPaper.disabled = !auto;
+}
+
+for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="extract"]')) {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    const previous = mode;
+    mode = radio.value as "auto" | "simple";
+    syncExtractUi();
+    if (mode !== previous) {
+      if (!confirmDiscard()) {
+        mode = previous;
+        syncExtractUi();
+        return;
+      }
+      processSource();
+    }
+  });
+}
+function onLineWidth(source: HTMLInputElement): void {
+  const v = Math.min(60, Math.max(3, Math.round(Number(source.value) || 3)));
+  lineWidthRange.value = lineWidthNumber.value = String(v);
+}
+lineWidthRange.addEventListener("input", () => onLineWidth(lineWidthRange));
+lineWidthNumber.addEventListener("input", () => onLineWidth(lineWidthNumber));
+// 作り直しは重いので、つまみを離したとき・入力を確定したときだけ
+for (const el of [lineWidthRange, lineWidthNumber]) {
+  el.addEventListener("change", () => {
+    const v = Number(lineWidthRange.value);
+    if (v === appliedLineWidth) return;
+    if (!confirmDiscard()) {
+      syncExtractUi();
+      return;
+    }
+    appliedLineWidth = v;
+    processSource();
+  });
+}
+cropPaper.addEventListener("change", () => {
+  if (!confirmDiscard()) {
+    cropPaper.checked = appliedCrop;
+    return;
+  }
+  appliedCrop = cropPaper.checked;
+  processSource();
 });
 
 // ---------- 線のしきい値 ----------
