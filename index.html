@@ -163,6 +163,12 @@
       dialog h2 { margin: 0 0 6px; font-size: 16px; }
       dialog p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
       dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+      #extract-dialog { width: min(760px, 94vw); }
+      .extract-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; align-items: start; }
+      .extract-form { display: flex; flex-direction: column; gap: 10px; }
+      #extract-preview-wrap { display: flex; align-items: center; justify-content: center; height: 340px; border: 1px solid var(--line); border-radius: 6px; background: #fff; overflow: hidden; }
+      #extract-preview { max-width: 100%; max-height: 100%; }
+      @media (max-width: 700px) { .extract-body { grid-template-columns: 1fr; } #extract-preview-wrap { height: 240px; } }
       #gap-dialog-list { max-height: 50vh; overflow-y: auto; border-top: 1px solid var(--line); }
       .gap-item { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
       .gap-item canvas { width: 96px; height: 96px; flex: none; border: 1px solid var(--line); border-radius: 6px; background: #fff; image-rendering: pixelated; }
@@ -311,24 +317,8 @@
         </section>
 
         <section class="card">
-          <h2>線の抽出</h2>
-          <div class="seg" role="group" aria-label="抽出の方法">
-            <button class="btn on grow" data-extract="auto" title="影・机・他の物が映っていても、細い黒い線だけを取り出す">自動（写真向け）</button>
-            <button class="btn grow" data-extract="simple" title="画素の黒さをそのまま使う。太い黒ベタも黒として扱う">単純（スキャン向け）</button>
-          </div>
-          <label class="row"><input id="crop-paper" type="checkbox" checked />紙の部分だけを切り出す</label>
-          <div class="row">
-            <span>線の太さ</span>
-            <input id="line-width" class="grow" type="range" min="3" max="60" value="12" />
-            <input id="line-width-n" type="number" min="3" max="60" value="12" style="width: 4.2em" />
-          </div>
-          <small>線として拾う太さの上限（px）。これより広い暗い部分（影・机）は線にしません。</small>
-          <div class="row">
-            <span>しきい値</span>
-            <input id="threshold" class="grow" type="range" min="10" max="255" value="128" />
-            <span id="threshold-value" style="width: 2.4em; text-align: right">128</span>
-          </div>
-          <small>小さいほど薄い線まで拾います。塗りがはみ出す（線が途切れている）ときは小さくします。変えると領域の番号と選択は作り直されます。</small>
+          <h2>線描化</h2>
+          <button class="btn" id="open-extract" disabled title="線の抽出の設定を開き直す（塗った色は消えます）">線描化の設定を開く…</button>
         </section>
 
         <section class="card">
@@ -356,6 +346,37 @@
         </section>
       </aside>
     </div>
+    <dialog id="extract-dialog" aria-labelledby="extract-dialog-title">
+      <h2 id="extract-dialog-title">線描化の設定</h2>
+      <p>画像から黒い線を取り出す設定です。プレビューを見ながら調整して、決定を押してください。</p>
+      <div class="extract-body">
+        <div id="extract-preview-wrap"><canvas id="extract-preview"></canvas></div>
+        <div class="extract-form">
+          <div class="seg" role="group" aria-label="抽出の方法">
+            <button class="btn on grow" type="button" data-extract="auto" title="影・机・他の物が映っていても、細い黒い線だけを取り出す">自動（写真向け）</button>
+            <button class="btn grow" type="button" data-extract="simple" title="画素の黒さをそのまま使う。太い黒ベタも黒として扱う">単純（スキャン向け）</button>
+          </div>
+          <label class="row"><input id="crop-paper" type="checkbox" checked />紙の部分だけを切り出す</label>
+          <div class="row">
+            <span>線の太さ</span>
+            <input id="line-width" class="grow" type="range" min="3" max="60" value="12" />
+            <input id="line-width-n" type="number" min="3" max="60" value="12" style="width: 4.2em" />
+          </div>
+          <small>線として拾う太さの上限（px）。これより広い暗い部分（影・机）は線にしません。</small>
+          <div class="row">
+            <span>しきい値</span>
+            <input id="threshold" class="grow" type="range" min="10" max="255" value="128" />
+            <span id="threshold-value" style="width: 2.4em; text-align: right">128</span>
+          </div>
+          <small>小さいほど薄い線まで拾います。塗りがはみ出す（線が途切れている）ときは小さくします。</small>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="extract-cancel" type="button">キャンセル</button>
+        <button class="btn primary" id="extract-ok" type="button">決定</button>
+      </div>
+    </dialog>
+
     <dialog id="gap-dialog" aria-labelledby="gap-dialog-title">
       <h2 id="gap-dialog-title">線の隙間の確認</h2>
       <p>線にわずかな切れ目があり、つながって見える場所が見つかりました。それぞれ、別々の領域にするか、同じ領域のままにするかを選んでください（あとから変更はできません）。</p>
