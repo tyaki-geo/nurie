@@ -24,6 +24,7 @@ import {
   toHex,
     type Rgba,
 } from "./lib/lineart";
+import { DEFAULT_SPAN, spanScale, zoomSpan } from "./lib/preview";
 import { PALETTE } from "./lib/palette";
 import { defaultMaxLineWidth, extractFromPhoto, extractSimple } from "./lib/photo";
 import {
@@ -1119,22 +1120,39 @@ gapDialog.addEventListener("close", () => {
   if (gapPending) gapDialog.showModal(); // ブラウザが Esc で閉じてしまったときは開き直す
 });
 
-/** 隙間の位置の周りを切り出した小さな絵（中心に印） */
+/**
+ * 隙間の位置の周りを切り出した小さな絵（中心に印）。
+ * 絵の上でホイールを回すと、隙間を中心に拡大縮小する（絵ごとに独立。平行移動はしない）。
+ */
 function gapPreview(x: number, y: number): HTMLCanvasElement {
   const size = 96;
   const c = document.createElement("canvas");
   c.width = c.height = size;
+  c.title = "ホイールで拡大・縮小";
   const g = c.getContext("2d")!;
   g.imageSmoothingEnabled = false;
-  const span = 64; // 画像の画素
-  g.fillStyle = "#fff";
-  g.fillRect(0, 0, size, size);
-  g.drawImage(canvas, x - span / 2, y - span / 2, span, span, 0, 0, size, size);
-  g.beginPath();
-  g.arc(size / 2, size / 2, 14, 0, Math.PI * 2);
-  g.lineWidth = 2;
-  g.strokeStyle = "#f97316";
-  g.stroke();
+  let span = DEFAULT_SPAN; // 切り出す範囲（画像の画素）
+  const draw = (): void => {
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, size, size);
+    g.drawImage(canvas, x - span / 2, y - span / 2, span, span, 0, 0, size, size);
+    g.beginPath();
+    g.arc(size / 2, size / 2, 14, 0, Math.PI * 2);
+    g.lineWidth = 2;
+    g.strokeStyle = "#f97316";
+    g.stroke();
+  };
+  c.addEventListener(
+    "wheel",
+    (ev) => {
+      ev.preventDefault(); // 一覧のスクロールではなく拡大縮小にする
+      span = zoomSpan(span, ev.deltaY);
+      c.title = `${spanScale(span).toFixed(1)} 倍（ホイールで拡大・縮小）`;
+      draw();
+    },
+    { passive: false },
+  );
+  draw();
   return c;
 }
 
