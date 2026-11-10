@@ -257,15 +257,6 @@ async function loadFile(file: File): Promise<void> {
   await loadBlob(file, file.name);
 }
 
-async function loadSample(name: string): Promise<void> {
-  const res = await fetch(`${import.meta.env.BASE_URL}samples/${name}.png`);
-  if (!res.ok) {
-    alert("サンプルを読み込めませんでした。");
-    return;
-  }
-  await loadBlob(await res.blob(), name);
-}
-
 /** ステータス行に文字を出す。色の見本（chip）をつけられる（値は出さない） */
 function setStatus(text: string, chip?: Rgba): void {
   status.replaceChildren();
@@ -1424,8 +1415,6 @@ $<HTMLInputElement>("file").addEventListener("change", (ev) => {
   if (file) void loadFile(file);
   input.value = ""; // 同じファイルをもう一度選べるように
 });
-$("sample-house").addEventListener("click", () => void loadSample("house"));
-$("sample-rings").addEventListener("click", () => void loadSample("rings"));
 
 for (const el of [empty, viewport]) {
   el.addEventListener("dragover", (ev) => {

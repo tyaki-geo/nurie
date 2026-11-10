@@ -34,7 +34,6 @@ npm run typecheck && npm test && npm run build
 - `src/lib/export.ts` 画像出力の形式（PNG/JPEG/WebP）と縦横比（元のまま・1:1・4:3 など）。画像は縮小せず中央に置き、余白は透明（JPEG は白）。保存は「画像を保存」（Ctrl+S）でポップアップ（`#export-dialog`）を開き、形式・縦横比（出力サイズを表示）をそこで選ぶ
 - `src/lib/view.ts` キャンバスの拡大縮小・平行移動の座標計算（等倍〜40倍）。表示枠は作業領域いっぱいで、紙面は枠の中を動く（拡大しても視野は狭くならない）。端は余白 48px まで寄せられ、枠に収まる間は中央
 - `src/lib/brush.ts` 太さのあるブラシが覆う画素
-- `scripts/generate-samples.mjs` サンプル画像（`public/samples/`）を作る。依存なし
 - `tests/` Vitest。DOM に依存しないロジックはすべてここでテストする
 - `docs/template-setup.md` テンプレートの反映手順（テンプレートの産物。設定後は削除か書き直し）
 
