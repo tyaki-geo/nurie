@@ -35,7 +35,7 @@ import {
 } from "./lib/regions";
 
 /** 作業用の画像の長辺の上限（大きすぎるとメモリと処理が重くなる） */
-const MAX_SIDE = 2048;
+const MAX_SIDE = 4096;
 const MAX_HISTORY = 50;
 const MAX_RECENT = 12;
 const WHITE: Rgba = [255, 255, 255, 255];
@@ -98,7 +98,9 @@ let redoStack: Edit[] = [];
 let recent: Rgba[] = [];
 let snapOn = true; // ブラシを線の中心に吸着させる
 const gapOn = true;
-const gapWidth = 6; // ふさぐ隙間の最大幅（px）
+/** ふさぐ隙間の最大幅（px）。長辺 2048px のとき 6px で、画像が大きいほど比例して広げる */
+const gapWidthFor = (width: number, height: number): number =>
+  Math.max(6, Math.round((6 * Math.max(width, height)) / 2048));
 const gapEnclosure = 0.85; // 囲まれ具合の下限
 let gapMerged = new Set<number>(); // 「同じ領域」にした隙間の候補番号（それ以外は別々）
 
@@ -208,7 +210,7 @@ function rebuildRegions(): void {
 function analyzeNow(): void {
   if (!doc) return;
   doc.gaps = gapOn
-    ? analyzeGaps(doc.base, doc.width, doc.height, { maxWidth: gapWidth, minEnclosure: gapEnclosure })
+    ? analyzeGaps(doc.base, doc.width, doc.height, { maxWidth: gapWidthFor(doc.width, doc.height), minEnclosure: gapEnclosure })
     : null;
   gapMerged = new Set();
   resolveNow();
