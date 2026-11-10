@@ -103,7 +103,13 @@ const gapEnclosure = 0.85; // 囲まれ具合の下限
 let gapMerged = new Set<number>(); // 「同じ領域」にした隙間の候補番号（それ以外は別々）
 
 /** 読み込んだ画像（作業用の大きさに縮小したもの）。抽出の設定を変えたときに作り直すために持っておく */
-let source: { data: Uint8ClampedArray; width: number; height: number; name: string } | null = null;
+interface SourceImage {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+  name: string;
+}
+let source: SourceImage | null = null;
 let extractMode: "auto" | "simple" = "auto";
 
 // ---------- 画像の読み込みと線の抽出 ----------
@@ -117,19 +123,19 @@ async function loadBlob(blob: Blob, name: string): Promise<void> {
     return;
   }
   const { width, height } = fitSize(bitmap.width, bitmap.height, MAX_SIDE);
-  // 透明な部分は白として扱うので、白地に描いて読み取る
-  canvas.width = width;
-  canvas.height = height;
-  ctx.imageSmoothingQuality = "high";
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  // 透明な部分は白として扱うので、白地に描いて読み取る。設定を決めるまで画面のキャンバスには触れない
+  const tmp = document.createElement("canvas");
+  tmp.width = width;
+  tmp.height = height;
+  const tctx = tmp.getContext("2d", { willReadFrequently: true })!;
+  tctx.imageSmoothingQuality = "high";
+  tctx.fillStyle = "#fff";
+  tctx.fillRect(0, 0, width, height);
+  tctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
 
-  source = { data: ctx.getImageData(0, 0, width, height).data, width, height, name };
   appliedLineWidth = defaultMaxLineWidth(width, height);
-  syncExtractUi();
-  processSource();
+  openExtractDialog({ data: tctx.getImageData(0, 0, width, height).data, width, height, name });
 }
 
 /** 読み込んだ画像から、いまの設定で線を抽出して作業用のデータを作る（塗った色・選択・履歴は作り直しになる） */
@@ -240,6 +246,7 @@ function confirmDiscard(): boolean {
 }
 
 async function loadFile(file: File): Promise<void> {
+  if (document.querySelector("dialog[open]")) return; // ポップアップの操作中は読み込まない
   if (!file.type.startsWith("image/")) {
     alert("画像ファイルを選んでください。");
     return;
@@ -879,6 +886,7 @@ function updateButtons(): void {
   $<HTMLButtonElement>("redo").disabled = redoStack.length === 0;
   $<HTMLButtonElement>("clear").disabled = !has;
   $<HTMLButtonElement>("reset-lines").disabled = !has;
+  $<HTMLButtonElement>("open-extract").disabled = !has;
   $<HTMLButtonElement>("save").disabled = !has;
   $<HTMLButtonElement>("select-all").disabled = !has;
   $<HTMLButtonElement>("select-none").disabled = selection.size === 0;
@@ -1037,77 +1045,143 @@ window.addEventListener("keydown", (ev) => {
   ev.preventDefault();
 });
 
-// ---------- 線の抽出の設定 ----------
+// ---------- 線描化の設定（画像を読み込んだ直後に、ポップアップで決める） ----------
 
+const extractDialog = $<HTMLDialogElement>("extract-dialog");
 const lineWidthRange = $<HTMLInputElement>("line-width");
 const lineWidthNumber = $<HTMLInputElement>("line-width-n");
 const cropPaper = $<HTMLInputElement>("crop-paper");
+const thresholdInput = $<HTMLInputElement>("threshold");
 const extractButtons = document.querySelectorAll<HTMLElement>("[data-extract]");
+const previewCanvas = $<HTMLCanvasElement>("extract-preview");
+const pctx = previewCanvas.getContext("2d")!;
+/** 決定した設定（ポップアップの部品は、決定するまでの下書き） */
 let appliedLineWidth = Number(lineWidthRange.value);
 let appliedCrop = cropPaper.checked;
 
-/** 設定の部品を、いまの状態（モード・適用済みの値）に合わせる */
+const PREVIEW_SIDE = 640;
+/** ポップアップで設定中の画像と、そのプレビュー用の縮小版・抽出結果 */
+let dialogSource: SourceImage | null = null;
+let previewSource: { data: Uint8ClampedArray; width: number; height: number; k: number } | null = null;
+let previewDark: { dark: Uint8Array; width: number; height: number } | null = null;
+let draftMode: "auto" | "simple" = "auto";
+let previewTimer = 0;
+
+/** 下書きの部品の状態（自動のときだけ使える項目の有効・無効） */
 function syncExtractUi(): void {
-  chooseButton(extractButtons, "extract", extractMode);
+  chooseButton(extractButtons, "extract", draftMode);
+  const auto = draftMode === "auto";
+  lineWidthRange.disabled = lineWidthNumber.disabled = cropPaper.disabled = !auto;
+}
+
+function openExtractDialog(src: SourceImage): void {
+  dialogSource = src;
+  // プレビューは縮小した画像で作る（線の太さも同じ比率で縮める）
+  const k = Math.min(1, PREVIEW_SIDE / Math.max(src.width, src.height));
+  const pw = Math.max(1, Math.round(src.width * k));
+  const ph = Math.max(1, Math.round(src.height * k));
+  const full = document.createElement("canvas");
+  full.width = src.width;
+  full.height = src.height;
+  full.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(src.data), src.width, src.height), 0, 0);
+  const small = document.createElement("canvas");
+  small.width = pw;
+  small.height = ph;
+  const sctx = small.getContext("2d", { willReadFrequently: true })!;
+  sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(full, 0, 0, pw, ph);
+  previewSource = { data: sctx.getImageData(0, 0, pw, ph).data, width: pw, height: ph, k };
+  previewDark = null;
+
+  draftMode = extractMode;
   lineWidthRange.value = lineWidthNumber.value = String(appliedLineWidth);
   cropPaper.checked = appliedCrop;
-  const auto = extractMode === "auto";
-  lineWidthRange.disabled = lineWidthNumber.disabled = cropPaper.disabled = !auto;
+  thresholdInput.value = String(threshold);
+  $("threshold-value").textContent = String(threshold);
+  syncExtractUi();
+  extractDialog.showModal();
+  updatePreview(true);
+}
+
+/** プレビューを描く。再抽出が要るとき（方法・切り出し・線の太さ）は extract = true。しきい値だけなら抽出済みの黒さから作り直す */
+function updatePreview(extract: boolean): void {
+  const p = previewSource;
+  if (!p) return;
+  if (extract || !previewDark) {
+    const lw = Math.max(3, Math.round(Number(lineWidthRange.value) * p.k));
+    const e =
+      draftMode === "auto"
+        ? extractFromPhoto(p.data, p.width, p.height, { maxLineWidth: lw, cropPaper: cropPaper.checked })
+        : extractSimple(p.data, p.width, p.height);
+    previewDark = { dark: e.dark, width: e.width, height: e.height };
+  }
+  const { dark, width, height } = previewDark;
+  const alpha = lineAlpha(dark, Number(thresholdInput.value));
+  previewCanvas.width = width;
+  previewCanvas.height = height;
+  const img = pctx.createImageData(width, height);
+  for (let i = 0; i < alpha.length; i++) {
+    const v = 255 - alpha[i]!;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  pctx.putImageData(img, 0, 0);
+}
+
+/** 再抽出は重いので、操作が止まってから */
+function schedulePreview(): void {
+  window.clearTimeout(previewTimer);
+  previewTimer = window.setTimeout(() => updatePreview(true), 150);
 }
 
 extractButtons.forEach((b) =>
   b.addEventListener("click", () => {
-    const next = b.dataset.extract as "auto" | "simple";
-    if (next === extractMode) return;
-    if (!confirmDiscard()) return;
-    extractMode = next;
+    draftMode = b.dataset.extract as "auto" | "simple";
     syncExtractUi();
-    processSource();
+    updatePreview(true);
   }),
 );
-
 function onLineWidth(from: HTMLInputElement): void {
   const v = Math.min(60, Math.max(3, Math.round(Number(from.value) || 3)));
   lineWidthRange.value = lineWidthNumber.value = String(v);
+  schedulePreview();
 }
 lineWidthRange.addEventListener("input", () => onLineWidth(lineWidthRange));
 lineWidthNumber.addEventListener("input", () => onLineWidth(lineWidthNumber));
-// 作り直しは重いので、つまみを離したとき・入力を確定したときだけ
-for (const el of [lineWidthRange, lineWidthNumber]) {
-  el.addEventListener("change", () => {
-    const v = Number(lineWidthRange.value);
-    if (v === appliedLineWidth) return;
-    if (!confirmDiscard()) {
-      syncExtractUi();
-      return;
-    }
-    appliedLineWidth = v;
-    processSource();
-  });
-}
-cropPaper.addEventListener("change", () => {
-  if (!confirmDiscard()) {
-    cropPaper.checked = appliedCrop;
-    return;
-  }
-  appliedCrop = cropPaper.checked;
-  processSource();
+cropPaper.addEventListener("change", () => updatePreview(true));
+thresholdInput.addEventListener("input", () => {
+  $("threshold-value").textContent = thresholdInput.value;
+  updatePreview(false);
 });
 
-const thresholdInput = $<HTMLInputElement>("threshold");
-let rebuildTimer = 0;
-thresholdInput.addEventListener("input", () => {
+function closeExtractDialog(): void {
+  window.clearTimeout(previewTimer);
+  extractDialog.close();
+}
+
+$("extract-cancel").addEventListener("click", closeExtractDialog);
+extractDialog.addEventListener("close", () => {
+  // Esc で閉じたときも、プレビュー用の画像を手放す
+  window.clearTimeout(previewTimer);
+  dialogSource = null;
+  previewSource = null;
+  previewDark = null;
+});
+$("extract-ok").addEventListener("click", () => {
+  const src = dialogSource;
+  if (!src) return;
+  const reopened = src === source; // 読み込み済みの画像の設定を開き直したときだけ、塗った色が消える
+  if (reopened && !confirmDiscard()) return;
+  extractMode = draftMode;
+  appliedLineWidth = Math.min(60, Math.max(3, Math.round(Number(lineWidthRange.value) || 3)));
+  appliedCrop = cropPaper.checked;
   threshold = Number(thresholdInput.value);
-  $("threshold-value").textContent = String(threshold);
-  if (!doc) return;
-  doc.alpha = lineAlpha(doc.dark, threshold);
-  render();
-  // 領域の切れ目が変わるので、番号・隙間・選択は作り直す（塗った色は画素ごとに残る）。重いので、つまみの動きが止まってから
-  window.clearTimeout(rebuildTimer);
-  rebuildTimer = window.setTimeout(() => {
-    rebuildRegions();
-    setStatus(regionSummary());
-  }, 120);
+  closeExtractDialog();
+  source = src;
+  processSource();
+});
+$("open-extract").addEventListener("click", () => {
+  if (source) openExtractDialog(source);
 });
 
 // ---------- 線の隙間の確認（画像を読み込んだ直後に、ポップアップで必ず選ばせる） ----------
@@ -1353,6 +1427,5 @@ window.addEventListener("paste", (ev) => {
 
 setColor(color);
 setTool("fill");
-syncExtractUi();
 refreshSelectionUi();
 updateButtons();
